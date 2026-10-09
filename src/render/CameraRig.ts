@@ -43,6 +43,8 @@ export class CameraRig {
   focus: Vector3 | null = null;
   shake = 0;
   shakeEnabled = true;
+  /** 0..1 multiplier on the speed / afterburner FOV push (reduce-motion lowers it). */
+  fovKickScale = 1;
   private fov = 72;
   /** The chase camera's lagged orientation (before the look offset), kept for the target view. */
   private basis = new Quaternion();
@@ -98,7 +100,7 @@ export class CameraRig {
     }
 
     // FOV kick with speed and afterburner
-    const targetFov = this.baseFov + C.fovKick * Math.pow(clamp(tg.speedNorm, 0, 1), 1.5) + C.abFov * tg.ab + (this.mode === 'cockpit' ? 4 : 0);
+    const targetFov = this.baseFov + this.fovKickScale * (C.fovKick * Math.pow(clamp(tg.speedNorm, 0, 1), 1.5) + C.abFov * tg.ab) + (this.mode === 'cockpit' ? 4 : 0);
     this.fov = damp(this.fov, targetFov, 4, dt);
     if (Math.abs(cam.fov - this.fov) > 0.01 || this.mode !== this.lastMode) {
       cam.fov = this.fov;

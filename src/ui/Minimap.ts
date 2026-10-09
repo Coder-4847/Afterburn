@@ -1,6 +1,7 @@
 import type { MapDef } from '../data/maps/types';
 import { DEG, clamp } from '../core/math';
 import type { Heightmap } from '../world/Heightmap';
+import { palette as P } from './palette';
 
 export interface Contact {
   x: number;
@@ -21,8 +22,6 @@ export interface MinimapData {
   contacts: Contact[];
 }
 
-const BLUE = '#4aa8ff';
-const RED = '#ff5a4a';
 const SMALL = 176;
 const BIG = 560;
 const BASE = 512;
@@ -137,7 +136,7 @@ export class Minimap {
       g.save();
       g.translate(a.x * px, a.z * px);
       g.rotate((a.heading - 90) * DEG);
-      g.fillStyle = a.team === 'blue' ? BLUE : RED;
+      g.fillStyle = a.team === 'blue' ? P.blue : P.red;
       g.fillRect(-a.length * px * 0.5, -1.4, a.length * px, 2.8);
       g.restore();
     }
@@ -176,7 +175,7 @@ export class Minimap {
     g.save();
     g.translate(c.x, c.z);
     g.rotate(rot);
-    const col = c.team === 'blue' ? BLUE : RED;
+    const col = c.team === 'blue' ? P.blue : P.red;
     g.fillStyle = col;
     g.strokeStyle = 'rgba(0,0,0,0.7)';
     g.lineWidth = size * 0.22;
@@ -194,7 +193,7 @@ export class Minimap {
       g.fillRect(-size * 0.6, -size * 0.6, size * 1.2, size * 1.2);
       g.strokeRect(-size * 0.6, -size * 0.6, size * 1.2, size * 1.2);
     } else {
-      g.fillStyle = Math.floor(this.time * 6) % 2 === 0 ? '#ffffff' : RED;
+      g.fillStyle = Math.floor(this.time * 6) % 2 === 0 ? '#ffffff' : P.red;
       g.beginPath();
       g.arc(0, 0, size * 0.4, 0, Math.PI * 2);
       g.fill();

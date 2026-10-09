@@ -1,5 +1,6 @@
 import { PerspectiveCamera, Vector3 } from 'three';
 import { clamp } from '../core/math';
+import { palette as P } from './palette';
 
 /** Everything the combat part of the HUD needs, gathered by the game once per frame. */
 export interface CombatHud {
@@ -56,10 +57,6 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, parent?
   return e;
 }
 
-const FOE = '#ff7a59';
-const FOE_LOCK = '#ff3b3b';
-const AMBER = '#ffcf4d';
-const OK = '#7dffb0';
 const _p = new Vector3();
 
 interface Pt {
@@ -125,7 +122,7 @@ export class CombatHudLayer {
     return _p.z < 1 && _p.z > -1;
   }
 
-  update(c: CanvasRenderingContext2D, d: CombatHud | null, cam: PerspectiveCamera, w: number, h: number, dt: number): void {
+  update(c: CanvasRenderingContext2D, d: CombatHud | null, cam: PerspectiveCamera, w: number, h: number, dt: number, scale = 1): void {
     this.time += dt;
     if (!d) {
       this.panel.style.display = 'none';
@@ -179,8 +176,8 @@ export class CombatHudLayer {
     this.drawMarkers(c, d, w, h);
     this.drawNumbers(c, d, cam, w, h);
     this.drawMissileWarning(c, d, w, h);
-    this.drawRwr(c, d, w, h);
-    this.drawSilhouette(c, d, w, h);
+    this.drawRwr(c, d, w, h, scale);
+    this.drawSilhouette(c, d, w, h, scale);
     c.restore();
   }
 
@@ -189,7 +186,7 @@ export class CombatHudLayer {
   private drawTarget(c: CanvasRenderingContext2D, d: CombatHud, cam: PerspectiveCamera, w: number, h: number): void {
     const t = d.target;
     if (!t) return;
-    const col = t.locked ? FOE_LOCK : FOE;
+    const col = t.locked ? P.foeLock : P.foe;
     const pt = { x: 0, y: 0 };
     const on = this.project(t.pos, cam, w, h, pt);
     const margin = 46;
@@ -275,7 +272,7 @@ export class CombatHudLayer {
     const by = pt.y - s - 10;
     c.fillStyle = 'rgba(0,0,0,0.55)';
     c.fillRect(pt.x - bw / 2 - 1, by - 1, bw + 2, 6);
-    c.fillStyle = t.health > 0.5 ? OK : t.health > 0.25 ? AMBER : FOE_LOCK;
+    c.fillStyle = t.health > 0.5 ? P.ok : t.health > 0.25 ? P.amber : P.foeLock;
     c.fillRect(pt.x - bw / 2, by, bw * clamp(t.health, 0, 1), 4);
   }
 
@@ -288,8 +285,8 @@ export class CombatHudLayer {
   private drawPipper(c: CanvasRenderingContext2D, d: CombatHud, cam: PerspectiveCamera, w: number, h: number): void {
     const pt = { x: 0, y: 0 };
     if (d.lead && this.project(d.lead, cam, w, h, pt)) {
-      c.strokeStyle = AMBER;
-      c.fillStyle = AMBER;
+      c.strokeStyle = P.amber;
+      c.fillStyle = P.amber;
       c.lineWidth = 1.6;
       c.beginPath();
       c.arc(pt.x, pt.y, 9, 0, Math.PI * 2);
@@ -299,7 +296,7 @@ export class CombatHudLayer {
       c.fill();
     }
     if (d.impact && this.project(d.impact, cam, w, h, pt)) {
-      c.strokeStyle = AMBER;
+      c.strokeStyle = P.amber;
       c.lineWidth = 1.6;
       const s = 9;
       c.strokeRect(pt.x - s, pt.y - s, s * 2, s * 2);
@@ -314,7 +311,7 @@ export class CombatHudLayer {
       c.lineTo(pt.x, pt.y + s + 5);
       c.stroke();
       c.font = '10px ui-monospace, Consolas, monospace';
-      c.fillStyle = AMBER;
+      c.fillStyle = P.amber;
       c.textAlign = 'center';
       c.fillText('CCIP', pt.x, pt.y + s + 18);
     }
@@ -339,7 +336,7 @@ export class CombatHudLayer {
       c.globalAlpha = 1;
     };
     draw(d.hit, '#ffffff', 9, 17);
-    draw(d.kill, FOE_LOCK, 12, 28);
+    draw(d.kill, P.foeLock, 12, 28);
   }
 
   private drawNumbers(c: CanvasRenderingContext2D, d: CombatHud, cam: PerspectiveCamera, w: number, h: number): void {
@@ -351,7 +348,7 @@ export class CombatHudLayer {
       const a = clamp(1.4 - n.age / 0.9, 0, 1);
       c.globalAlpha = a;
       c.font = (n.kill ? '700 17px' : '600 13px') + ' ui-monospace, Consolas, monospace';
-      c.fillStyle = n.kill ? FOE_LOCK : AMBER;
+      c.fillStyle = n.kill ? P.foeLock : P.amber;
       c.fillText(n.text, pt.x, pt.y - n.age * 46 - 8);
     }
     c.globalAlpha = 1;
@@ -365,8 +362,8 @@ export class CombatHudLayer {
     const cy = h / 2;
     const R = Math.min(w, h) * 0.2;
     const blink = Math.floor(this.time * Math.max(2.5, 14 / Math.max(1, d.missiles[0].eta))) % 2 === 0;
-    c.strokeStyle = FOE_LOCK;
-    c.fillStyle = FOE_LOCK;
+    c.strokeStyle = P.foeLock;
+    c.fillStyle = P.foeLock;
     c.globalAlpha = blink ? 0.95 : 0.45;
     c.lineWidth = 1.2;
     c.setLineDash([3, 7]);
@@ -392,9 +389,9 @@ export class CombatHudLayer {
 
   // ---- radar warning scope -------------------------------------------------------------------------
 
-  private drawRwr(c: CanvasRenderingContext2D, d: CombatHud, w: number, h: number): void {
+  private drawRwr(c: CanvasRenderingContext2D, d: CombatHud, w: number, h: number, scale: number): void {
     const R = 50;
-    const cx = w - Math.max(24, w * 0.04) - 258 - R;
+    const cx = w - Math.max(24, w * 0.04) - 258 * scale - R;
     const cy = h * 0.91 - R;
     c.save();
     c.shadowBlur = 0;
@@ -428,13 +425,13 @@ export class CombatHudLayer {
       const x = cx + Math.sin(r.bearing) * rr;
       const y = cy - Math.cos(r.bearing) * rr;
       const blink = r.locked ? Math.floor(this.time * 8) % 2 === 0 : true;
-      c.fillStyle = r.locked ? FOE_LOCK : AMBER;
+      c.fillStyle = r.locked ? P.foeLock : P.amber;
       c.globalAlpha = blink ? 1 : 0.4;
       c.beginPath();
       c.arc(x, y, r.locked ? 5 : 3.5, 0, Math.PI * 2);
       c.fill();
       if (r.locked) {
-        c.strokeStyle = FOE_LOCK;
+        c.strokeStyle = P.foeLock;
         c.beginPath();
         c.arc(x, y, 8, 0, Math.PI * 2);
         c.stroke();
@@ -445,7 +442,7 @@ export class CombatHudLayer {
 
   // ---- damage silhouette ---------------------------------------------------------------------------
 
-  private drawSilhouette(c: CanvasRenderingContext2D, d: CombatHud, w: number, h: number): void {
+  private drawSilhouette(c: CanvasRenderingContext2D, d: CombatHud, w: number, h: number, scale: number): void {
     if (d.modules.length === 0) return;
     let minX = 1e9, maxX = -1e9, minZ = 1e9, maxZ = -1e9;
     for (const m of d.modules) {
@@ -460,7 +457,7 @@ export class CombatHudLayer {
     const bh = 118;
     const hw = Math.max(Math.abs(minX), Math.abs(maxX));
     const k = Math.min((bw - 16) / (hw * 2), (bh - 22) / (maxZ - minZ));
-    const x0 = Math.max(24, w * 0.04) + 86 + bw / 2;
+    const x0 = Math.max(24, w * 0.04) + 86 * scale + bw / 2;
     const y0 = h * 0.91 - bh;
     c.save();
     c.shadowBlur = 0;
@@ -470,7 +467,7 @@ export class CombatHudLayer {
     const sz = (z: number) => y0 + 8 + (z - minZ) * k;
     for (let i = d.modules.length - 1; i >= 0; i--) {
       const m = d.modules[i];
-      const col = m.gone ? '#ff3b3b' : m.ratio > 0.6 ? OK : m.ratio > 0.3 ? AMBER : FOE_LOCK;
+      const col = m.gone ? P.foeLock : m.ratio > 0.6 ? P.ok : m.ratio > 0.3 ? P.amber : P.foeLock;
       for (const r of m.rects) {
         const x = sx(r[0]);
         const z = sz(r[1]);
@@ -502,7 +499,7 @@ export class CombatHudLayer {
       c.font = '700 10px ui-monospace, Consolas, monospace';
       const blink = Math.floor(this.time * 4) % 2 === 0;
       if (blink) {
-        c.fillStyle = d.fire ? FOE_LOCK : AMBER;
+        c.fillStyle = d.fire ? P.foeLock : P.amber;
         c.fillText(d.fire ? 'FIRE' : 'FUEL LEAK', x0, y0 + 11);
       }
     }

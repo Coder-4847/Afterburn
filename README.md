@@ -5,10 +5,9 @@ module damage model, and a forgiving, fun feel. It is a fully static web app: no
 asset downloads. Terrain, aircraft, textures and audio are all generated in code, so the repository is
 self-contained and deploys straight to GitHub Pages.
 
-> **Status: Phase 5 of 6 (game modes and menus).** Team Deathmatch from 1v1 to 10v10 against AI (score and time limits, live
-> score, hold-to-show scoreboard, results screen with a rematch), Training Range and Free Flight, a mission-setup screen, full key
-> rebinding, and a procedural music score that follows the action. On top of Phases 1-4: 14 aircraft, three maps, AI pilots,
-> weapons and module damage, minimap. Phase 6 is optimisation, balance and release polish.
+> **Status: version 1.0, all six phases complete.** 14 aircraft, three maps, AI pilots at three skill levels, Team Deathmatch from
+> 1v1 to 10v10, a training range and free flight, weapons with a module damage model, loadouts, a minimap, full key rebinding,
+> procedural audio and music, and accessibility options. Everything is generated in code: no downloads, no backend.
 
 ## Run it
 
@@ -141,6 +140,29 @@ AI pilots do this on a low pass over their own strip.
 your selected target is circled; inbound missiles flash). **M** opens the whole map, north-up. The minimap can be switched off in
 Settings > HUD.
 
+## Accessibility
+
+Settings > Accessibility:
+
+- **Colour-blind safe colours**: blue against orange instead of blue against red (HUD, minimap, scoreboard and the jets' team colours;
+  applies when the next mission loads). The gun pipper turns white so it never competes with the orange enemy marks.
+- **Reduce motion**: no screen shake, speed streaks, sun glare, G-load vignette or blinking warnings, and less field-of-view push.
+- **HUD size** (80% to 150%) and **high-contrast HUD** (heavier outlines, darker panels).
+- Every key and mouse button can be rebound; menus work with the keyboard (Tab / Enter) and show a focus outline; every audio warning
+  (missile alarm, radar lock, lock tone) has a visual counterpart (MISSILE / LOCKED text, the warning ring, the RWR scope).
+- Flight assists: three difficulty levels, terrain warning with optional auto pull-up, and Arcade mode's stall protection and
+  auto-levelling.
+
+## Performance notes
+
+- Each jet's static parts (fuselage, wings, pods, intakes, canopy, fins) are merged into a handful of meshes at build time, weapon
+  geometry is shared between all copies, and effects use pooled particle systems, so a 10v10 match (20 aircraft) stays well within a
+  frame budget on a mid-range laptop. Control surfaces, nozzles, landing gear and weapon stores stay separate because they move.
+- Graphics quality (Low to Ultra, auto by default), render resolution and adaptive resolution are in Settings; **F3** shows live
+  frame time, draw calls and triangles.
+- Switching maps and missions frees the old world's GPU memory (checked by repeated reloads: geometry and texture counts stay flat).
+- If the browser reclaims the graphics context, or the game hits a repeating error, a panel offers a reload instead of freezing.
+
 ## Music and sound
 
 All audio is generated in the browser. Effects (cannon, missiles, explosions, engine, warnings) and a procedural score: a slow pad and
@@ -215,7 +237,7 @@ post-processing. Medium and above render in HDR with MSAA, bloom (sun, afterburn
 plus sun glare, speed streaks, contrails (above about 3,600 m), wingtip vortices (hard pulls), cumulus clouds you can fly through
 and shadows. Cloud count, shadow resolution, terrain detail and effect density all scale per tier (`src/render/quality.ts`). **Adaptive resolution** lowers the
 render scale automatically if the frame rate drops and raises it again when things are stable. Press **F3** for live stats.
-Target: 60 FPS on a mid-range laptop; Phase 6 is the dedicated 10v10 optimisation pass.
+Target: 60 FPS on a mid-range laptop, including 10v10 matches.
 
 ## Project layout
 
@@ -242,7 +264,7 @@ Aircraft, maps, weapons and (later) modes are plain data objects: adding content
 
 The build uses a relative base (`./`), so it works from `https://<user>.github.io/<repo>/` without changes.
 
-1. Create a GitHub repository and push this project to the `main` branch.
+1. Create a GitHub repository and push this project to the `main` (or `master`) branch.
 2. In the repository, open **Settings > Pages** and set **Source** to **GitHub Actions**.
 3. The included workflow (`.github/workflows/deploy.yml`) builds and deploys on every push to `main`.
 
@@ -250,6 +272,8 @@ Nothing is deployed until you push.
 
 ## Notes
 
+- No licence file is included: add the one you want before publishing the repository.
+- Saved data lives in the browser's `localStorage` (settings, key bindings, loadouts). Settings > Saved data resets the settings.
 - Aircraft and weapon names (F-16C, Su-57, AIM-120, ...) are used as in-game labels only. All models are original
   procedural builds. If you publish commercially, check trademark rules for the real-world names and replace them where needed.
 - Development builds expose the game on `window.afterburn` (with a `debug` helper for scripted flight tests); production
@@ -261,5 +285,5 @@ Nothing is deployed until you push.
 2. Aircraft roster (14 jets), animated surfaces, post-processing, clouds, hangar (done)
 3. Weapons, countermeasures, module damage model, loadouts, training targets, audio (done)
 4. AI pilots, all three maps, airstrip rearm/repair, minimap (done)
-5. **Game modes (1v1 to 10v10, Training), menus, scoreboards, rebinding, music** (this phase)
-6. Optimisation, balance, bug sweep, accessibility, release prep
+5. Game modes (1v1 to 10v10, Training), menus, scoreboards, rebinding, music (done)
+6. Optimisation, balance, bug sweep, accessibility, release prep (done)

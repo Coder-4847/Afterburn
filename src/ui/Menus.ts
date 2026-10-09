@@ -59,6 +59,8 @@ export class Menus {
     this.crashTitle = el('b', '', this.crash, 'CRASHED');
     this.crashSub = el('span', '', this.crash, '');
     this.layer = el('div', '', this.root);
+    this.layer.setAttribute('role', 'dialog');
+    this.layer.setAttribute('aria-live', 'polite');
     this.layer.style.cssText = 'position:absolute;inset:0;pointer-events:none';
   }
 
@@ -72,6 +74,18 @@ export class Menus {
     this.layer.innerHTML = '';
     this.layer.style.pointerEvents = 'none';
     this.visible = false;
+  }
+
+  /** Unrecoverable problem (lost graphics context, repeated errors): explain and offer a reload. */
+  showError(title: string, message: string): void {
+    const o = el('div', 'overlay solid', this.clear());
+    const p = el('div', 'panel', o);
+    el('p', 'brand', p, 'AFTERBURN');
+    el('h1', 'title', p, title);
+    el('p', 'sub', p, message);
+    const b = el('button', 'btn primary', p, 'RELOAD');
+    b.addEventListener('click', () => window.location.reload());
+    this.visible = true;
   }
 
   // ---- loading ---------------------------------------------------------------------------------
@@ -327,12 +341,28 @@ export class Menus {
     this.slider(p, 'Effects volume', 'masterVolume', 0, 1, 0.05, (v) => Math.round(v * 100) + '%');
     this.slider(p, 'Music volume', 'musicVolume', 0, 1, 0.05, (v) => Math.round(v * 100) + '%');
 
+    el('div', 'section', p, 'Accessibility');
+    this.toggle(p, 'Colour-blind safe colours', 'colorblind', 'Blue against orange instead of blue against red (applies when the next mission loads)');
+    this.toggle(p, 'Reduce motion', 'reduceMotion', 'No screen shake, speed streaks, sun glare, G-load vignette or blinking; less field-of-view push');
+    this.slider(p, 'HUD size', 'hudScale', 0.8, 1.5, 0.05, (v) => Math.round(v * 100) + '%', 'Scales the readouts, weapon panel, score and kill feed');
+    this.toggle(p, 'High-contrast HUD', 'highContrast', 'Heavier outlines and darker panels behind the HUD');
+
     el('div', 'section', p, 'HUD');
     this.toggle(p, 'Pitch ladder', 'hudPitchLadder');
     this.toggle(p, 'Heading tape', 'hudHeadingTape');
     this.toggle(p, 'Flight path marker', 'hudFlightPath');
     this.toggle(p, 'Minimap', 'minimap', 'M opens the full map');
 
+    el('div', 'section', p, 'Saved data');
+    const reset = el('button', 'btn', p);
+    reset.append('Reset all settings');
+    el('small', '', reset, 'Back to defaults (graphics, controls, key bindings, accessibility). Saved loadouts are kept.');
+    reset.addEventListener('click', () => {
+      if (!window.confirm('Reset all settings to their defaults?')) return;
+      this.settings.reset();
+      for (const k of Object.keys(this.settings.value) as (keyof Settings)[]) this.cb.changed(k);
+      this.showSettings();
+    });
     const back = el('button', 'btn', p, 'Back');
     back.style.marginTop = '18px';
     back.addEventListener('click', () => this.backTo());

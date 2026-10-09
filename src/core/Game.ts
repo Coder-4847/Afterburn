@@ -4,6 +4,7 @@ import { Skirmish } from '../ai/Skirmish';
 import { Aircraft } from '../aircraft/Aircraft';
 import { GameAudio } from '../audio/Audio';
 import { Music } from '../audio/Music';
+import { palette, setColorblind } from '../ui/palette';
 import { Match, formatClock } from '../modes/Match';
 import { ScoreboardOverlay, type ScoreData } from '../ui/Scoreboard';
 import { cameraFor } from '../aircraft/AircraftDef';
@@ -160,7 +161,7 @@ export class Game {
     });
 
     this.settings.changed.on((k) => {
-      if (k === 'masterVolume' || k === 'musicVolume' || k === 'drones') this.applySetting(k);
+      if (k === 'masterVolume' || k === 'musicVolume' || k === 'drones' || k === 'hudScale' || k === 'highContrast' || k === 'reduceMotion' || k === 'colorblind') this.applySetting(k);
     });
     // browsers only allow audio after a gesture: the first click anywhere starts the menu music
     window.addEventListener('pointerdown', () => this.audio.unlock(), { once: true });
@@ -169,6 +170,10 @@ export class Game {
     this.matchEl.className = 'hud-match';
     this.matchEl.style.display = 'none';
     this.hud.root.appendChild(this.matchEl);
+    this.canvas.addEventListener('webglcontextlost', (e) => {
+      e.preventDefault();
+      this.fatal('Graphics context lost', 'The browser reclaimed the graphics card (often after sleep, a driver reset or too many tabs). Reload to continue.');
+    });
     window.addEventListener('resize', () => this.onResize());
     window.addEventListener('keydown', (e) => { if (e.code === 'Escape' && this.state === 'hangar') this.closeHangar(); });
     document.addEventListener('visibilitychange', () => { if (document.hidden) this.pause(); });
@@ -219,7 +224,7 @@ export class Game {
   /** The part of the settings that needs the world or the aircraft rebuilt when it changes. */
   private sortieSig(): string {
     const s = this.settings.value;
-    return [s.mapId, s.sortie, s.teamSize, s.aiSkill, s.scoreLimit, s.timeLimit].join('|');
+    return [s.mapId, s.sortie, s.teamSize, s.aiSkill, s.scoreLimit, s.timeLimit, s.colorblind].join('|');
   }
 
   /** Take the sortie apart: every aircraft, the training range and the combat layer (before the world goes away). */
@@ -246,7 +251,7 @@ export class Game {
     this.world.fogToneMapped = !this.renderer.postActive;
     this.mapId = map.id;
     this.builtSig = '';
-    this.hud.minimap.setMap(map, this.world.heightmap);
+
   }
 
   /** Create the combat layer, the player's aircraft and whatever the sortie puts in the air (training range or AI teams). */
@@ -268,6 +273,7 @@ export class Game {
     }
     this.feed = [];
     this.numbers = [];
+    this.hud.minimap.setMap(this.world.map, this.world.heightmap);
     this.builtSig = this.sortieSig();
     this.applySetting('difficulty', true);
     this.world.terrain.prewarm(this.rig.camera.position);
@@ -301,7 +307,7 @@ export class Game {
   }
 
   private applyAllSettings(): void {
-    for (const k of ['fov', 'difficulty', 'cameraShake', 'hudPitchLadder', 'speedUnit', 'showFps', 'masterVolume', 'musicVolume', 'drones'] as (keyof Settings)[]) this.applySetting(k, true);
+    for (const k of ['fov', 'difficulty', 'cameraShake', 'hudPitchLadder', 'speedUnit', 'showFps', 'masterVolume', 'musicVolume', 'drones', 'colorblind', 'reduceMotion', 'hudScale', 'highContrast'] as (keyof Settings)[]) this.applySetting(k, true);
   }
 
   private applySetting(key: keyof Settings, silent = false): void {
@@ -318,14 +324,22 @@ export class Game {
       case 'fov': this.rig.baseFov = s.fov; break;
       case 'timeOfDay': this.world?.setTimeOfDay(s.timeOfDay); break;
       case 'difficulty': if (this.player) this.player.flight.difficulty = DIFFICULTIES[s.difficulty]; break;
-      case 'cameraShake': this.rig.shakeEnabled = s.cameraShake; break;
+      case 'cameraShake':
+      case 'reduceMotion':
+        this.rig.shakeEnabled = s.cameraShake && !s.reduceMotion;
+        this.rig.fovKickScale = s.reduceMotion ? 0.25 : 1;
+        document.body.classList.toggle('reduce-motion', s.reduceMotion);
+        break;
+      case 'colorblind': setColorblind(s.colorblind); break;
+      case 'hudScale': document.documentElement.style.setProperty('--hud-scale', String(s.hudScale)); break;
+      case 'highContrast': document.body.classList.toggle('hi-contrast', s.highContrast); break;
       case 'showFps': this.fpsEl.style.display = s.showFps ? '' : 'none'; break;
       case 'masterVolume': this.audio.setVolume(s.masterVolume); break;
       case 'musicVolume': this.audio.setMusicVolume(s.musicVolume); break;
       case 'drones': this.range?.setHostile(s.drones === 'hostile'); break;
       default: break;
     }
-    this.hud.options = { unit: s.speedUnit, ladder: s.hudPitchLadder, tape: s.hudHeadingTape, flightPath: s.hudFlightPath };
+    this.hud.options = { unit: s.speedUnit, ladder: s.hudPitchLadder, tape: s.hudHeadingTape, flightPath: s.hudFlightPath, contrast: s.highContrast, reduceMotion: s.reduceMotion, scale: s.hudScale };
     if (key === 'showFps' && !silent) this.fpsText = '';
   }
 
@@ -561,8 +575,35 @@ export class Game {
   // main loop
   // ---------------------------------------------------------------------------------------------
 
+  private errorCount = 0;
+  private dead = false;
+
+  /** Stop the game and show a reload prompt. */
+  private fatal(title: string, message: string): void {
+    if (this.dead) return;
+    this.dead = true;
+    this.state = 'loading';
+    this.input.captureKeys = false;
+    this.input.exitLock();
+    document.body.classList.remove('playing');
+    this.hud.setVisible(false);
+    this.menus.showError(title, message);
+  }
+
   private loop = (now: number): void => {
     requestAnimationFrame(this.loop);
+    if (this.dead) return;
+    try {
+      this.frame(now);
+      this.errorCount = Math.max(0, this.errorCount - 0.05);
+    } catch (e) {
+      console.error(e);
+      // a one-off glitch is survivable; the same error every frame is not
+      if (++this.errorCount > 20) this.fatal('Something went wrong', 'The game hit a repeating error and stopped. Reloading usually fixes it. Your settings and loadouts are saved.');
+    }
+  };
+
+  private frame(now: number): void {
     let dt = (now - this.lastTime) / 1000;
     this.lastTime = now;
     dt = Math.min(dt, 0.1);
@@ -593,7 +634,7 @@ export class Game {
     else if (this.state !== 'loading') this.renderFrame(this.state === 'playing' ? dt : 0);
     this.input.endFrame();
     this.updateFps(dt);
-  };
+  }
 
   private renderFrame(dt: number): void {
     const p = this.player;
@@ -1218,9 +1259,9 @@ export class Game {
       nearestStrip: dNear < 7000 ? { name: near.def.name, dist: dNear } : null,
       cameraMode: this.rig.mode,
       visible: true,
-      glare: this.sunGlare(),
+      glare: this.settings.value.reduceMotion ? null : this.sunGlare(),
       veil: this.world.cloudInside,
-      speedFx: this.quality.screenFx && this.state === 'playing' ? smoothstep(0.5, 1, f.speed / p.def.flight.maxSpeed) * 0.55 + f.abLevel * 0.3 : 0,
+      speedFx: this.quality.screenFx && !this.settings.value.reduceMotion && this.state === 'playing' ? smoothstep(0.5, 1, f.speed / p.def.flight.maxSpeed) * 0.55 + f.abLevel * 0.3 : 0,
       combat: this.combatHud(),
       minimap: this.minimapData(),
     };

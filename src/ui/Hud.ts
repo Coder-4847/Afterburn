@@ -42,6 +42,12 @@ export interface HudData {
 }
 
 export interface HudOptions {
+  /** HUD size multiplier (the DOM panels are scaled by CSS; the canvas widgets need to keep clear of them). */
+  scale?: number;
+  /** Thicker, darker outlines on the canvas HUD. */
+  contrast?: boolean;
+  /** No vignette, blinking or screen streaks. */
+  reduceMotion?: boolean;
   unit: SpeedUnit;
   ladder: boolean;
   tape: boolean;
@@ -222,7 +228,7 @@ export class Hud {
     // G-load vignette (mild "grey-out" at high G, red tint under negative G)
     const gv = smoothstep(5.5, 10, d.g) * 0.7;
     const neg = smoothstep(-1.2, -3.5, d.g) * 0.5;
-    this.vignette.style.opacity = String(Math.max(gv, neg));
+    this.vignette.style.opacity = o.reduceMotion ? '0' : String(Math.max(gv, neg));
     this.vignette.classList.toggle('neg', neg > gv);
 
     // ---- canvas ----
@@ -231,14 +237,14 @@ export class Hud {
     c.clearRect(0, 0, this.w, this.h);
     c.lineCap = 'round';
     c.lineJoin = 'round';
-    c.shadowColor = 'rgba(0,0,0,0.55)';
-    c.shadowBlur = 3;
+    c.shadowColor = o.contrast ? 'rgba(0,0,0,0.95)' : 'rgba(0,0,0,0.55)';
+    c.shadowBlur = o.contrast ? 7 : 3;
 
     if (d.speedFx > 0.02) this.drawSpeedLines(c, d.speedFx);
     if (o.tape) this.drawTape(c, d.heading);
     if (o.ladder) this.drawLadder(c, d, cam);
     this.drawMarkers(c, d, cam);
-    this.combat.update(c, d.combat, cam, this.w, this.h, dt);
+    this.combat.update(c, d.combat, cam, this.w, this.h, dt, o.scale ?? 1);
     this.minimap.update(d.minimap, dt);
   }
 

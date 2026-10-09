@@ -12,9 +12,9 @@ import type { ParticleSystem } from '../render/Particles';
 import type { Combat } from '../weapons/Combat';
 import { Fighter } from '../weapons/Fighter';
 import type { Team } from '../weapons/types';
+import { palette } from '../ui/palette';
 import { PilotBrain, SKILLS } from './Pilot';
 
-const TEAM_COLOR: Record<Team, number> = { blue: 0x3aa0ff, red: 0xff5a4a };
 const _surf: SurfaceInfo = { height: 0, onRunway: false, onApron: false };
 
 interface Slot {
@@ -56,7 +56,7 @@ export class Skirmish {
   private add(team: Team, index: number, count: number): void {
     const pool = this.pool(team);
     const def = pool[Math.floor(Math.random() * pool.length)];
-    const ac = new Aircraft(def, DIFFICULTIES.standard, TEAM_COLOR[team]);
+    const ac = new Aircraft(def, DIFFICULTIES.standard, team === 'blue' ? palette.blueHex : palette.redHex);
     this.scene.add(ac.object);
     const f = new Fighter(`${def.name} ${team === 'blue' ? 'B' : 'R'}${index + 1}`, team, ac, false);
     // AI flies a missile-heavy loadout so it can fight at range

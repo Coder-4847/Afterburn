@@ -211,7 +211,15 @@ export class Combat implements FighterHooks {
   }
 
   clearRange(): void {
-    for (const t of [...this.ground, ...this.dummies]) this.root.remove(t.mesh);
+    for (const t of [...this.ground, ...this.dummies]) {
+      this.root.remove(t.mesh);
+      t.mesh.traverse((o) => {
+        const m = o as Mesh;
+        m.geometry?.dispose();
+        const mat = m.material;
+        if (mat) (Array.isArray(mat) ? mat : [mat]).forEach((x) => x.dispose());
+      });
+    }
     this.ground.length = 0;
     this.dummies.length = 0;
   }

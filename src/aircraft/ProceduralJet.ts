@@ -1,7 +1,8 @@
 import {
-  BoxGeometry, ConeGeometry, BufferAttribute, BufferGeometry, CylinderGeometry, Float32BufferAttribute, Group, Mesh, SphereGeometry, Vector3,
-  type Material,
+  BoxGeometry, ConeGeometry, BufferAttribute, BufferGeometry, CylinderGeometry, Float32BufferAttribute, Group, Matrix4, Mesh, SphereGeometry, Vector3,
+  type Material, type Object3D,
 } from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { clamp, damp, lerp } from '../core/math';
 import { Afterburner } from './Afterburner';
 import type { AircraftDef, FinSpec, IntakeSpec, ModelSpec } from './AircraftDef';
@@ -208,7 +209,60 @@ export class JetModel implements ModelHandle {
     this.buildIntakesAndCanopy(spec);
     this.buildEngines(spec);
     this.buildGear(spec);
+    this.bake();
     this.root.userData.def = def.id;
+  }
+
+  /**
+   * A jet is built from ~35 meshes, which is far too many draw calls for twenty of them (and again for every shadow pass).
+   * Everything that never moves relative to its holder (fuselage, wing slabs, pods, intakes, canopy, fins) is merged into one
+   * mesh per material. Control surfaces, nozzles, afterburners, landing gear and weapon stores stay separate: they animate or
+   * can disappear. The wings and the tail keep their own holders so the damage model can still rip them off.
+   */
+  private bake(): void {
+    const skip = new Set<Object3D>([this.parts.wingL, this.parts.wingR, this.parts.tail, this.storeRoot, this.nose, this.mainL, this.mainR]);
+    for (const m of this.movers) skip.add(m.g);
+    for (const g of this.nozzleGroups) skip.add(g);
+    for (const b of this.afterburners) skip.add(b.group);
+    for (const holder of [this.root, this.parts.wingL, this.parts.wingR, this.parts.tail]) this.bakeHolder(holder, skip);
+  }
+
+  private bakeHolder(holder: Group, skip: Set<Object3D>): void {
+    const buckets = new Map<string, { mat: Material; shadow: boolean; geos: BufferGeometry[] }>();
+    const dead: Mesh[] = [];
+    const walk = (o: Object3D, parent: Matrix4): void => {
+      for (const child of o.children) {
+        if (skip.has(child)) continue;
+        child.updateMatrix();
+        const m = new Matrix4().multiplyMatrices(parent, child.matrix);
+        const mesh = child as Mesh;
+        if (mesh.isMesh && !Array.isArray(mesh.material)) {
+          const g = mesh.geometry.clone().applyMatrix4(m);
+          const key = [mesh.material.uuid, mesh.castShadow, g.index ? 'i' : 'n', Object.keys(g.attributes).sort().join(',')].join('|');
+          let b = buckets.get(key);
+          if (!b) buckets.set(key, (b = { mat: mesh.material, shadow: mesh.castShadow, geos: [] }));
+          b.geos.push(g);
+          dead.push(mesh);
+        } else walk(child, m);
+      }
+    };
+    walk(holder, new Matrix4());
+    for (const mesh of dead) {
+      mesh.removeFromParent();
+      mesh.geometry.dispose();
+      const i = this.geoms.indexOf(mesh.geometry);
+      if (i >= 0) this.geoms.splice(i, 1);
+    }
+    for (const b of buckets.values()) {
+      const merged = b.geos.length === 1 ? b.geos[0] : mergeGeometries(b.geos, false);
+      if (!merged) continue;
+      for (const g of b.geos) if (g !== merged) g.dispose();
+      const mesh = new Mesh(merged, b.mat);
+      mesh.castShadow = b.shadow;
+      mesh.receiveShadow = true;
+      this.geoms.push(merged);
+      holder.add(mesh);
+    }
   }
 
   // ---- small helpers ------------------------------------------------------------------------
@@ -479,7 +533,7 @@ export class JetModel implements ModelHandle {
       const w = weaponMesh(def, this.mats);
       w.position.y = -def.radius - 0.12;
       g.add(w);
-      const pylon = new Mesh(new BoxGeometry(0.12, 0.3, Math.min(1.4, def.length * 0.45)), this.mats.dark);
+      const pylon = new Mesh(pylonGeometry(def), this.mats.dark);
       pylon.position.y = -0.02;
       g.add(pylon);
       g.position.set(st.x, st.y + (st.kind === 'tip' ? 0 : 0.1), st.z);
@@ -552,36 +606,53 @@ export class JetModel implements ModelHandle {
 }
 
 
-const weaponGeoms = new Map<string, Group>();
+/** Merged weapon geometry, built once per store type and shared by every copy (two draw calls per store). */
+const weaponGeoms = new Map<string, { white: BufferGeometry | null; dark: BufferGeometry | null; pylon: BufferGeometry }>();
+
+function weaponGeometry(def: StoreDef): { white: BufferGeometry | null; dark: BufferGeometry | null; pylon: BufferGeometry } {
+  const hit = weaponGeoms.get(def.id);
+  if (hit) return hit;
+  const L = def.length;
+  const r = def.radius;
+  const white: BufferGeometry[] = [];
+  const dark: BufferGeometry[] = [];
+  const add = (to: BufferGeometry[], geo: BufferGeometry, x = 0, y = 0, z = 0, rotZ = 0): void => {
+    geo.applyMatrix4(new Matrix4().makeRotationZ(rotZ).setPosition(x, y, z));
+    to.push(geo);
+  };
+  if (def.kind === 'ir' || def.kind === 'radar') {
+    add(white, new CylinderGeometry(r, r, L * 0.7, 10).rotateX(Math.PI / 2), 0, 0, L * 0.05);
+    add(def.kind === 'ir' ? dark : white, new ConeGeometry(r, L * 0.3, 10).rotateX(-Math.PI / 2), 0, 0, -L * 0.45);
+    for (let i = 0; i < 4; i++) add(dark, new BoxGeometry(r * 3.4, 0.015, L * 0.16), 0, 0, L * 0.4, (i * Math.PI) / 2 + Math.PI / 4);
+  } else if (def.kind === 'rocket') {
+    add(dark, new CylinderGeometry(r, r, L, 14).rotateX(Math.PI / 2));
+    add(white, new CylinderGeometry(r * 0.96, r * 0.96, 0.06, 14).rotateX(Math.PI / 2), 0, 0, -L / 2);
+  } else {
+    add(dark, new CylinderGeometry(r, r, L * 0.6, 12).rotateX(Math.PI / 2), 0, 0, 0);
+    add(dark, new ConeGeometry(r, L * 0.25, 12).rotateX(-Math.PI / 2), 0, 0, -L * 0.42);
+    add(dark, new CylinderGeometry(r * 0.6, r, L * 0.18, 12).rotateX(Math.PI / 2), 0, 0, L * 0.38);
+  }
+  const merge = (list: BufferGeometry[]): BufferGeometry | null => {
+    if (list.length === 0) return null;
+    const m = list.length === 1 ? list[0] : mergeGeometries(list, false);
+    if (list.length > 1) for (const g of list) g.dispose();
+    return m;
+  };
+  const out = { white: merge(white), dark: merge(dark), pylon: new BoxGeometry(0.12, 0.3, Math.min(1.4, def.length * 0.45)) };
+  weaponGeoms.set(def.id, out);
+  return out;
+}
 
 /** A simple visual for a store: missiles are slim with fins, pods are fat tubes, bombs are teardrops. Nose toward -Z. */
 export function weaponMesh(def: StoreDef, mats: JetMaterials): Group {
   const g = new Group();
-  const L = def.length;
-  const r = def.radius;
-  const white = mats.strut;
-  const dark = mats.dark;
-  const add = (geo: BufferGeometry, mat: Material, x = 0, y = 0, z = 0): Mesh => {
-    const m = new Mesh(geo, mat);
-    m.position.set(x, y, z);
-    g.add(m);
-    return m;
-  };
-  if (def.kind === 'ir' || def.kind === 'radar') {
-    add(new CylinderGeometry(r, r, L * 0.7, 10).rotateX(Math.PI / 2), white, 0, 0, L * 0.05);
-    add(new ConeGeometry(r, L * 0.3, 10).rotateX(-Math.PI / 2), def.kind === 'ir' ? dark : white, 0, 0, -L * 0.45);
-    for (let i = 0; i < 4; i++) {
-      const fin = add(new BoxGeometry(r * 3.4, 0.015, L * 0.16), dark, 0, 0, L * 0.4);
-      fin.rotation.z = (i * Math.PI) / 2 + Math.PI / 4;
-    }
-  } else if (def.kind === 'rocket') {
-    add(new CylinderGeometry(r, r, L, 14).rotateX(Math.PI / 2), dark);
-    add(new CylinderGeometry(r * 0.96, r * 0.96, 0.06, 14).rotateX(Math.PI / 2), white, 0, 0, -L / 2);
-  } else {
-    add(new CylinderGeometry(r, r, L * 0.6, 12).rotateX(Math.PI / 2), dark, 0, 0, 0);
-    add(new ConeGeometry(r, L * 0.25, 12).rotateX(-Math.PI / 2), dark, 0, 0, -L * 0.42);
-    add(new CylinderGeometry(r * 0.6, r, L * 0.18, 12).rotateX(Math.PI / 2), dark, 0, 0, L * 0.38);
-  }
-  weaponGeoms.set(def.id, g);
+  const geo = weaponGeometry(def);
+  if (geo.white) g.add(new Mesh(geo.white, mats.strut));
+  if (geo.dark) g.add(new Mesh(geo.dark, mats.dark));
   return g;
+}
+
+/** The shared pylon box for a store type. */
+export function pylonGeometry(def: StoreDef): BufferGeometry {
+  return weaponGeometry(def).pylon;
 }

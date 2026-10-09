@@ -51,6 +51,12 @@ export interface Settings {
   timeLimit: number;
   aiSkill: AiSkillId;
   musicVolume: number;
+  // accessibility
+  colorblind: boolean;
+  reduceMotion: boolean;
+  /** HUD text and panel size multiplier. */
+  hudScale: number;
+  highContrast: boolean;
   minimap: boolean;
   /** Selected aircraft id (see data/aircraft). */
   aircraftId: string;
@@ -86,6 +92,10 @@ export const DEFAULT_SETTINGS: Settings = {
   timeLimit: 10,
   aiSkill: 'regular',
   musicVolume: 0.5,
+  colorblind: false,
+  reduceMotion: false,
+  hudScale: 1,
+  highContrast: false,
   minimap: true,
   aircraftId: 'f16c',
 };
@@ -107,6 +117,13 @@ export class SettingsStore {
     } catch {
       /* storage unavailable or corrupt: keep defaults */
     }
+  }
+
+  /** Back to defaults (keeps the aircraft choice and the intro flag). */
+  reset(): void {
+    const keep = { aircraftId: this.value.aircraftId, seenIntro: this.value.seenIntro };
+    this.value = { ...DEFAULT_SETTINGS, ...keep, bindings: {} };
+    this.save();
   }
 
   set<K extends keyof Settings>(key: K, v: Settings[K]): void {

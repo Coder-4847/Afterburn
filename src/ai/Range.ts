@@ -1,5 +1,6 @@
 import { Vector3, type Scene } from 'three';
 import type { MapDef } from '../data/maps/types';
+import { palette } from '../ui/palette';
 import { Aircraft } from '../aircraft/Aircraft';
 import { TrailEmitter } from '../aircraft/Trails';
 import { DEG } from '../core/math';
@@ -13,7 +14,6 @@ import { Fighter } from '../weapons/Fighter';
 import { AirDummy, GroundTarget, type GroundKind } from '../weapons/Targets';
 import { DroneBrain, type DroneOpts } from './Drone';
 
-const TEAM_RED = 0xff5a4a;
 const _surf: SurfaceInfo = { height: 0, onRunway: false, onApron: false };
 
 interface DroneSlot {
@@ -134,7 +134,7 @@ export class TrainingRange {
 
   private addDrone(id: string, opts: DroneOpts): void {
     const def = getAircraft(id);
-    const ac = new Aircraft(def, DIFFICULTIES.standard, TEAM_RED);
+    const ac = new Aircraft(def, DIFFICULTIES.standard, palette.redHex);
     this.scene.add(ac.object);
     const f = new Fighter(`${def.name}`, 'red', ac, false);
     // drones always carry a balanced load, whatever the player saved for that airframe
