@@ -1,6 +1,7 @@
 import { PerspectiveCamera, Vector3 } from 'three';
 import type { SpeedUnit } from '../core/Settings';
 import { DEG, RAD, clamp, smoothstep } from '../core/math';
+import { CombatHudLayer, type CombatHud } from './CombatHud';
 
 export interface HudData {
   speed: number; // m/s
@@ -34,6 +35,8 @@ export interface HudData {
   veil: number;
   /** 0..1 speed streaks at the screen edge. */
   speedFx: number;
+  /** Weapons, targeting and damage state (null = nothing to show, e.g. while dead). */
+  combat: CombatHud | null;
 }
 
 export interface HudOptions {
@@ -85,6 +88,7 @@ export class Hud {
   private glare: HTMLElement;
   private veil: HTMLElement;
   private canopy: HTMLElement;
+  private combat: CombatHudLayer;
   private cache = new Map<HTMLElement, string>();
   options: HudOptions = { unit: 'kmh', ladder: true, tape: true, flightPath: true };
   private time = 0;
@@ -132,6 +136,7 @@ export class Hud {
     this.warn1 = el('div', 'warn', warns);
     this.warn2 = el('div', 'warn', warns);
     this.msg = el('div', 'hud-msg', this.root);
+    this.combat = new CombatHudLayer(this.root);
     this.resize();
   }
 
@@ -195,6 +200,9 @@ export class Hud {
     const warns: { t: string; cls: string }[] = [];
     if (d.pullUp === 2) warns.push({ t: 'AUTO PULL-UP', cls: 'red blink' });
     else if (d.pullUp === 1) warns.push({ t: 'PULL UP', cls: 'red blink' });
+    if (d.combat && d.combat.missiles.length > 0) warns.unshift({ t: 'MISSILE', cls: 'red blink' });
+    else if (d.combat && d.combat.rwr.some((r) => r.locked)) warns.unshift({ t: 'LOCKED', cls: 'amber blink' });
+    if (d.combat && d.combat.bingo && warns.length < 2) warns.push({ t: 'BINGO FUEL', cls: 'amber' });
     if (d.stall) warns.push({ t: 'STALL', cls: 'amber blink' });
     if (d.boundaryCountdown !== null) warns.push({ t: `RETURN TO COMBAT ZONE  ${Math.ceil(d.boundaryCountdown)}`, cls: 'amber' });
     if (!d.grounded && d.gearPos < 0.5 && d.agl < 160 && d.speed < 130 && d.nearestStrip && d.nearestStrip.dist < 3500) warns.push({ t: 'GEAR', cls: 'amber blink' });
@@ -225,6 +233,7 @@ export class Hud {
     if (o.tape) this.drawTape(c, d.heading);
     if (o.ladder) this.drawLadder(c, d, cam);
     this.drawMarkers(c, d, cam);
+    this.combat.update(c, d.combat, cam, this.w, this.h, dt);
   }
 
   private setWarn(e: HTMLElement, w?: { t: string; cls: string }): void {

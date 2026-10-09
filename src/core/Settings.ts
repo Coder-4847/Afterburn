@@ -7,6 +7,7 @@ export type SpeedUnit = 'kmh' | 'kt' | 'ms';
 export type TimeOfDay = 'day' | 'sunset';
 export type TerrainAssist = 'off' | 'warn' | 'auto';
 export type ControlScheme = 'mouse' | 'mouse-throttle-ws';
+export type DroneMode = 'passive' | 'hostile';
 
 export interface Settings {
   version: number;
@@ -33,6 +34,11 @@ export interface Settings {
   hudHeadingTape: boolean;
   hudFlightPath: boolean;
   seenIntro: boolean;
+  // audio / combat
+  masterVolume: number;
+  damageNumbers: boolean;
+  /** Training-range drones: evade only, or hunt the player. */
+  drones: DroneMode;
   /** Selected aircraft id (see data/aircraft). */
   aircraftId: string;
 }
@@ -57,6 +63,9 @@ export const DEFAULT_SETTINGS: Settings = {
   hudHeadingTape: true,
   hudFlightPath: true,
   seenIntro: false,
+  masterVolume: 0.7,
+  damageNumbers: true,
+  drones: 'passive',
   aircraftId: 'f16c',
 };
 

@@ -1,11 +1,13 @@
 import {
-  BufferAttribute, BufferGeometry, CylinderGeometry, Float32BufferAttribute, Group, Mesh, SphereGeometry, Vector3,
+  BoxGeometry, ConeGeometry, BufferAttribute, BufferGeometry, CylinderGeometry, Float32BufferAttribute, Group, Mesh, SphereGeometry, Vector3,
   type Material,
 } from 'three';
 import { clamp, damp, lerp } from '../core/math';
 import { Afterburner } from './Afterburner';
 import type { AircraftDef, FinSpec, IntakeSpec, ModelSpec } from './AircraftDef';
 import { SKIN_TILE, makeJetMaterials, type JetMaterials } from './Materials';
+import type { Armament } from '../data/stations';
+import { STORES, type StoreDef } from '../data/weapons';
 
 /** What the model needs each frame to animate itself. Axes are -1..1. */
 export interface JetState {
@@ -144,7 +146,7 @@ interface SecAt {
   yc: number;
 }
 
-function secAt(spec: ModelSpec, f: number): SecAt {
+export function secAt(spec: ModelSpec, f: number): SecAt {
   const s = spec.sections;
   f = clamp(f, 0, 1);
   for (let i = 0; i < s.length - 1; i++) {
@@ -176,6 +178,11 @@ export class JetModel implements ModelHandle {
   readonly root = new Group();
   readonly wingtips: Vector3[] = [];
   readonly nozzles: Vector3[] = [];
+  /** Detachable parts (shot off by the damage model). */
+  readonly parts = { wingL: new Group(), wingR: new Group(), tail: new Group() };
+  /** Visible weapon stores, indexed by station. */
+  private stores: (Group | null)[] = [];
+  private storeRoot = new Group();
   private movers: Mover[] = [];
   private nozzleGroups: Group[] = [];
   private afterburners: Afterburner[] = [];
@@ -194,6 +201,7 @@ export class JetModel implements ModelHandle {
   constructor(readonly def: AircraftDef, teamColor: number) {
     const spec = def.model;
     this.mats = makeJetMaterials(spec.colors, teamColor, def.id.length * 17 + def.id.charCodeAt(0));
+    this.root.add(this.parts.wingL, this.parts.wingR, this.parts.tail, this.storeRoot);
     this.buildFuselage(spec);
     this.buildWings(spec);
     this.buildTail(spec);
@@ -268,29 +276,30 @@ export class JetModel implements ModelHandle {
       const hinge = (t: number) => TE(t).lerp(LE(t), hingeC);
       const thick = (p: Vector3) => lerp(w.thickness, w.thickness * 0.34, clamp((Math.abs(p.x) - xr) / half, 0, 1));
       const origin = new Vector3();
+      const pg = s > 0 ? this.parts.wingR : this.parts.wingL;
 
-      this.mesh(polySlab([rootLE, tipLE, hinge(1), hinge(0)], origin, up, thick), this.mats.flat);
+      this.mesh(polySlab([rootLE, tipLE, hinge(1), hinge(0)], origin, up, thick), this.mats.flat, pg);
       // inboard flap, outboard aileron: both hinge about the same line (outward axis)
       const axis = hinge(1).sub(hinge(0));
-      this.surface([hinge(0), hinge(fs), TE(fs), TE(0)], hinge(fs * 0.5), axis, up, thick, 'flap', s, this.mats.flat);
-      this.surface([hinge(fs), hinge(1), TE(1), TE(fs)], hinge((fs + 1) / 2), axis, up, thick, 'ail', s, this.mats.flat);
+      this.surface([hinge(0), hinge(fs), TE(fs), TE(0)], hinge(fs * 0.5), axis, up, thick, 'flap', s, this.mats.flat, pg);
+      this.surface([hinge(fs), hinge(1), TE(1), TE(fs)], hinge((fs + 1) / 2), axis, up, thick, 'ail', s, this.mats.flat, pg);
 
       if (w.lerx) {
         const reach = w.lerx.reach;
         const A = P(xr * 0.6, z0 - w.lerx.length, w.y);
         const Pp = LE(reach);
         const R = P(xr, z0 + w.rootChord * 0.18);
-        this.mesh(polySlab([A, Pp, R], origin, up, () => w.thickness * 0.5), this.mats.flat);
+        this.mesh(polySlab([A, Pp, R], origin, up, () => w.thickness * 0.5), this.mats.flat, pg);
       }
       if (w.pods) {
-        const pod = this.mesh(new CylinderGeometry(0.17, 0.17, 2.6, 12).rotateX(Math.PI / 2), this.mats.dark);
+        const pod = this.mesh(new CylinderGeometry(0.17, 0.17, 2.6, 12).rotateX(Math.PI / 2), this.mats.dark, pg);
         pod.position.copy(tipLE).add(new Vector3(0, 0, w.tipChord * 0.45));
-        const nose = this.mesh(new SphereGeometry(0.17, 10, 8), this.mats.dark);
+        const nose = this.mesh(new SphereGeometry(0.17, 10, 8), this.mats.dark, pg);
         nose.position.copy(pod.position).add(new Vector3(0, 0, -1.3));
       } else {
         // wingtip accent tab (team colour)
         const tab = [P(xr + half - 0.55, z0 + w.sweep + w.tipChord * 0.1), P(xr + half - 0.55, z0 + w.sweep + w.tipChord * 0.95), tipTE, tipLE];
-        this.mesh(polySlab(tab, origin, up, () => w.thickness * 0.36), this.mats.accent);
+        this.mesh(polySlab(tab, origin, up, () => w.thickness * 0.36), this.mats.accent, pg);
       }
       this.wingtips.push(tipTE.clone().add(new Vector3(0, 0, -w.tipChord * 0.2)));
     }
@@ -302,7 +311,7 @@ export class JetModel implements ModelHandle {
     const L = spec.length;
     const up = new Vector3(0, 1, 0);
 
-    const allMoving = (t: { zRoot: number; rootChord: number; tipChord: number; span: number; sweep: number; y: number; dihedral?: number }, kind: 'stab' | 'canard', pivotFrac: number, thickR: number) => {
+    const allMoving = (t: { zRoot: number; rootChord: number; tipChord: number; span: number; sweep: number; y: number; dihedral?: number }, kind: 'stab' | 'canard', pivotFrac: number, thickR: number, parent: Group) => {
       const z0 = -L / 2 + t.zRoot * L;
       const xr = secAt(spec, t.zRoot + 0.04).hw * 0.82;
       const half = t.span / 2 - xr;
@@ -317,11 +326,11 @@ export class JetModel implements ModelHandle {
         const pt = tipLE.clone().lerp(tipTE, pivotFrac);
         const axis = pt.clone().sub(pr);
         const thick = (p: Vector3) => lerp(thickR, thickR * 0.4, clamp((Math.abs(p.x) - xr) / half, 0, 1));
-        this.surface([rootLE, tipLE, tipTE, rootTE], pr, axis, up, thick, kind, s, this.mats.flat);
+        this.surface([rootLE, tipLE, tipTE, rootTE], pr, axis, up, thick, kind, s, this.mats.flat, parent);
       }
     };
-    if (spec.hstab) allMoving(spec.hstab, 'stab', 0.45, 0.22);
-    if (spec.canard) allMoving({ ...spec.canard, dihedral: 0 }, 'canard', 0.4, 0.16);
+    if (spec.hstab) allMoving(spec.hstab, 'stab', 0.45, 0.22, this.parts.tail);
+    if (spec.canard) allMoving({ ...spec.canard, dihedral: 0 }, 'canard', 0.4, 0.16, this.root);
 
     for (const f of spec.fins) this.buildFin(spec, f);
 
@@ -353,7 +362,7 @@ export class JetModel implements ModelHandle {
       const grp = new Group();
       grp.position.x = s * xFin;
       grp.rotation.z = -f.cant * s * (ventral ? -1 : 1);
-      this.root.add(grp);
+      this.parts.tail.add(grp);
       const rootLE = new Vector3(0, yb, z0);
       const rootTE = new Vector3(0, yb, z0 + f.rootChord);
       const tipLE = new Vector3(0, yb + h, z0 + f.sweep);
@@ -457,6 +466,43 @@ export class JetModel implements ModelHandle {
     makeLeg(this.mainR, mainX, -L / 2 + 0.58 * L, -0.4, 0.34, 0.22);
   }
 
+  // ---- weapon stores -------------------------------------------------------------------------
+
+  /** Hang the chosen weapons on their pylons (internal bay stores are not visible). */
+  mountStores(items: (string | null)[], arm: Armament): void {
+    for (const g of this.stores) if (g) this.storeRoot.remove(g);
+    this.stores = items.map((id, i) => {
+      const st = arm.stations[i];
+      if (!id || !st || st.internal) return null;
+      const def = STORES[id];
+      const g = new Group();
+      const w = weaponMesh(def, this.mats);
+      w.position.y = -def.radius - 0.12;
+      g.add(w);
+      const pylon = new Mesh(new BoxGeometry(0.12, 0.3, Math.min(1.4, def.length * 0.45)), this.mats.dark);
+      pylon.position.y = -0.02;
+      g.add(pylon);
+      g.position.set(st.x, st.y + (st.kind === 'tip' ? 0 : 0.1), st.z);
+      g.traverse((o) => { o.castShadow = true; });
+      this.storeRoot.add(g);
+      return g;
+    });
+  }
+
+  setStoreVisible(i: number, visible: boolean): void {
+    const g = this.stores[i];
+    if (g) g.visible = visible;
+  }
+
+  showAllStores(): void {
+    for (const g of this.stores) if (g) g.visible = true;
+  }
+
+  /** Reveal wings and tail again (after a repair / respawn). */
+  restoreParts(): void {
+    this.parts.wingL.visible = this.parts.wingR.visible = this.parts.tail.visible = true;
+  }
+
   // ---- animation -----------------------------------------------------------------------------
 
   update(dt: number, s: JetState): void {
@@ -505,3 +551,37 @@ export class JetModel implements ModelHandle {
   }
 }
 
+
+const weaponGeoms = new Map<string, Group>();
+
+/** A simple visual for a store: missiles are slim with fins, pods are fat tubes, bombs are teardrops. Nose toward -Z. */
+export function weaponMesh(def: StoreDef, mats: JetMaterials): Group {
+  const g = new Group();
+  const L = def.length;
+  const r = def.radius;
+  const white = mats.strut;
+  const dark = mats.dark;
+  const add = (geo: BufferGeometry, mat: Material, x = 0, y = 0, z = 0): Mesh => {
+    const m = new Mesh(geo, mat);
+    m.position.set(x, y, z);
+    g.add(m);
+    return m;
+  };
+  if (def.kind === 'ir' || def.kind === 'radar') {
+    add(new CylinderGeometry(r, r, L * 0.7, 10).rotateX(Math.PI / 2), white, 0, 0, L * 0.05);
+    add(new ConeGeometry(r, L * 0.3, 10).rotateX(-Math.PI / 2), def.kind === 'ir' ? dark : white, 0, 0, -L * 0.45);
+    for (let i = 0; i < 4; i++) {
+      const fin = add(new BoxGeometry(r * 3.4, 0.015, L * 0.16), dark, 0, 0, L * 0.4);
+      fin.rotation.z = (i * Math.PI) / 2 + Math.PI / 4;
+    }
+  } else if (def.kind === 'rocket') {
+    add(new CylinderGeometry(r, r, L, 14).rotateX(Math.PI / 2), dark);
+    add(new CylinderGeometry(r * 0.96, r * 0.96, 0.06, 14).rotateX(Math.PI / 2), white, 0, 0, -L / 2);
+  } else {
+    add(new CylinderGeometry(r, r, L * 0.6, 12).rotateX(Math.PI / 2), dark, 0, 0, 0);
+    add(new ConeGeometry(r, L * 0.25, 12).rotateX(-Math.PI / 2), dark, 0, 0, -L * 0.42);
+    add(new CylinderGeometry(r * 0.6, r, L * 0.18, 12).rotateX(Math.PI / 2), dark, 0, 0, L * 0.38);
+  }
+  weaponGeoms.set(def.id, g);
+  return g;
+}

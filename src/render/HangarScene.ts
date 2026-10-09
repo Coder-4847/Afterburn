@@ -3,6 +3,7 @@ import {
   Vector3, type Texture, type WebGLRenderer,
 } from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+import type { Armament } from '../data/stations';
 import { JetModel } from '../aircraft/ProceduralJet';
 import type { AircraftDef } from '../aircraft/AircraftDef';
 import { clamp, damp } from '../core/math';
@@ -88,6 +89,11 @@ export class HangarScene {
     this.distTarget = L * 1.2 + 3;
     this.dist = Math.max(this.dist, this.distTarget * 0.9);
     this.gear = this.gearDown ? 1 : 0;
+  }
+
+  /** Show the chosen weapons hanging on the previewed aircraft. */
+  setLoadout(items: (string | null)[], arm: Armament): void {
+    this.model?.mountStores(items, arm);
   }
 
   /** Mouse drag. */

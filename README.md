@@ -1,13 +1,14 @@
 # AFTERBURN
 
 A browser-based modern jet combat sim: Ace Combat-style third-person flight with mouse aim, a War Thunder-style
-damage model (coming), and a forgiving, fun feel. It is a fully static web app: no backend, no accounts, no
-asset downloads. Terrain, aircraft, textures and (later) audio are all generated in code, so the repository is
+module damage model, and a forgiving, fun feel. It is a fully static web app: no backend, no accounts, no
+asset downloads. Terrain, aircraft, textures and audio are all generated in code, so the repository is
 self-contained and deploys straight to GitHub Pages.
 
-> **Status: Phase 2 of 6 (aircraft roster and visual polish).** 14 aircraft with distinct models and handling, a hangar,
-> post-processing, clouds and contrails, on one map (Coral Archipelago) with free flight, takeoff and landing. Weapons, AI,
-> the other maps and the game modes arrive in later phases.
+> **Status: Phase 3 of 6 (weapons and damage).** 14 aircraft, a hangar with a loadout screen, cannon, IR and radar missiles,
+> rockets, bombs, flares and chaff, a module damage model, procedural audio and a training range (target balloons, ground
+> targets, three Red drones) on one map (Coral Archipelago). Real AI opponents, the other maps and the game modes arrive in
+> later phases.
 
 ## Run it
 
@@ -33,6 +34,13 @@ Mouse-aim is the default scheme: the mouse moves a reticle, and the aircraft ban
 | **G** | Landing gear |
 | **W / S, A / D** | Manual pitch and roll (overrides the reticle while held) |
 | **Q / E** | Rudder |
+| **Left mouse** (hold) | Cannon |
+| **Right mouse** | Fire the selected weapon (missile / bomb on click, rockets while held) |
+| **1 2 3 4** | Select weapon group: IR missiles, radar missiles, rocket pods, bombs |
+| **Tab / T** | Cycle target (air targets for 1-2, ground targets for 3-4) |
+| **Y** | Lock the target nearest the nose |
+| **F / C** | Flares / chaff |
+| **X** (hold) | Target view: the camera swings round to keep the target in sight |
 | **V** | Camera: chase / cockpit |
 | **Z** or **middle mouse** (hold) | Look around |
 | **F3** | FPS / render stats |
@@ -41,8 +49,7 @@ Mouse-aim is the default scheme: the mouse moves a reticle, and the aircraft ban
 An alternate scheme (Settings > Controls) moves throttle to W / S. Sensitivity, invert-Y, FOV, graphics quality,
 difficulty and HUD options are all in the pause menu. Settings persist in `localStorage`.
 
-Weapons, targeting and countermeasure keys (LMB, RMB, Tab/T, Y, F, C, 1-4, M) are already in the binding table
-and start working in Phase 3. Full key rebinding UI comes in Phase 5 (the bindings are data-driven already).
+Full key rebinding UI comes in Phase 5 (the bindings are data-driven already).
 
 ### Taking off and landing
 
@@ -50,7 +57,7 @@ Pause > **Start on the runway**: throttle up, hold Space, pull the reticle up at
 lower the gear (**G**), throttle back and touch down gently. Arcade tolerates a sink rate under 9 m/s, a bank under 35 degrees
 and a touchdown speed under 540 km/h; Standard and Realistic-lite are stricter. After touchdown, hold **B** to brake.
 Landing anywhere other than a runway, or with the gear up, is a crash; you respawn after a few seconds.
-(Rearm and repair at airstrips arrives in Phase 4.)
+Stop on a Blue runway or apron for three seconds and you are repaired, refuelled and rearmed.
 
 Arcade mode also has terrain avoidance: **PULL UP** warns, then an auto pull-up takes over when impact is imminent.
 
@@ -89,6 +96,37 @@ scale (it is resized to the aircraft's length and centred). Optional node names 
 `elevator_l` / `elevator_r`, `rudder`, and anything starting with `gear` is hidden when the gear is up. The afterburner is attached
 automatically.
 
+## Weapons and damage
+
+**Weapons.** Each aircraft has real stations (wingtips, wing pylons, fuselage, internal bays on the stealth jets) built from its model,
+and a payload limit. Stores hang visibly on the jet and drop off as you fire them. The cannon (calibre, rounds and rate follow the
+aircraft) shows a lead pipper on the selected target; bombs show a CCIP impact marker.
+
+- **IR missiles** (AIM-9X, IRIS-T, R-73, PL-10, MICA-IR): a seeker cone and a lock range that grows with the target's heat
+  (afterburners are beacons) and is best from behind. They can be fired uncaged and will hunt for heat. **Flares** (F) seduce them.
+- **Radar missiles** (AIM-120D, Meteor, R-77, PL-15, MICA-EM): need a lock, with a range that depends on the target's radar cross-section
+  (stealth jets are hard to lock). They fly on a datalink, then go active; **chaff** (C) and notching (flying across the missile's line)
+  can defeat them.
+- **Rocket pods** ripple while the right button is held. **Bombs** are unguided, or laser-guided if you hold a lock on a ground target.
+- Missiles use proportional navigation with real G and speed limits, so a missile that is out of energy cannot catch a hard turn.
+
+**Damage** is per module, War Thunder style: cockpit (pilot), engines, fuel tanks, wings, tail and fuselage, each with hit boxes and
+hit points. Cannon rounds hit the module they strike; explosions damage everything in range. Lost wings roll you off, a hurt tail
+wobbles the nose and weakens control, engines lose thrust and burn, fuel leaks drain you (BINGO at 20%) and can ignite. Fires burn the
+fuselage until they go out, and speed helps put them out. The HUD shows a damage silhouette. A destroyed aircraft tumbles, burning,
+until it hits the ground; wings and tail can be ripped off as flaming debris.
+
+**Loadouts.** Hangar > pick an aircraft > **Loadout** tab: a dropdown per station, four presets (Dogfighter, Beyond-visual-range, Strike,
+Balanced), a payload bar, and named custom loadouts you can save and load. Loadouts are stored per aircraft in `localStorage`.
+
+**Training range.** The range sits east of the Blue island: hovering target balloons dead ahead, a ground-target site (bunker, radar,
+trucks, tents) on the foothills of the volcano, and three Red drones (Su-27, MiG-29, J-10C) that orbit, dispense flares and chaff and
+break across inbound missiles. Set **Red drones** to *Hostile* in Settings and they hunt you with guns and missiles (watch the
+MISSILE warning and the RWR scope). Targets respawn after a while. Kills, deaths, a kill feed and floating damage numbers are on the HUD.
+
+**Audio.** All sound is synthesised with WebAudio (cannon, launches, explosions, hits, engine, seeker tone, missile alarm, radar
+warning chirp); volume is in Settings. Audio starts on your first click, as browsers require.
+
 ## Tuning the feel
 
 Everything lives in config files, no code changes needed.
@@ -103,6 +141,10 @@ Everything lives in config files, no code changes needed.
 | Per-aircraft handling (stall speed, thrust, turn rates, G limit) | `src/data/aircraft/*.ts` |
 | Maps (terrain, palette, lighting, airstrips) | `src/data/maps/*.ts` |
 | Graphics tiers (shadows, LOD, resolution, fog) | `src/render/quality.ts` |
+| Missiles, rockets, bombs, cannon profiles | `src/data/weapons.ts` |
+| Stations, presets, payload limits per aircraft | `src/data/stations.ts` |
+| Hit points per module, fire and leak behaviour | `src/damage/DamageModel.ts` (aircraft `hp` in `src/data/aircraft/*.ts`) |
+| Training range layout and drones | `src/ai/Range.ts`, `src/ai/Drone.ts` |
 
 Quick guide for the most common tweaks:
 
@@ -131,10 +173,14 @@ src/
   render/    renderer + post-processing chain, camera rig, quality presets, particle system, hangar scene
   ui/        HUD (canvas + DOM), menus, styles
   data/      aircraft, maps, difficulty, tuning (all data-driven)
-  weapons/ damage/ ai/ audio/ modes/   reserved for later phases
+  weapons/   combat manager (projectiles, missiles, decoys, explosions), fighter, weapon system, loadouts, targets
+  damage/    module damage model
+  ai/        training-range drones and range layout
+  audio/     procedural WebAudio
+  modes/     reserved for later phases
 ```
 
-Aircraft, maps and (later) weapons and modes are plain data objects: adding content means adding a file under
+Aircraft, maps, weapons and (later) modes are plain data objects: adding content means adding a file under
 `src/data`.
 
 ## Deploying to GitHub Pages
@@ -157,8 +203,8 @@ Nothing is deployed until you push.
 ## Roadmap
 
 1. Foundation, flight, world (done)
-2. **Aircraft roster (14 jets), animated surfaces, post-processing, clouds, hangar** (this phase)
-3. Weapons, countermeasures, module damage model, training targets
+2. Aircraft roster (14 jets), animated surfaces, post-processing, clouds, hangar (done)
+3. **Weapons, countermeasures, module damage model, loadouts, training targets, audio** (this phase)
 4. AI pilots, all three maps, airstrip rearm/repair, minimap
 5. Game modes (1v1 to 10v10, Training), menus, scoreboards, rebinding, music
 6. Optimisation, balance, bug sweep, accessibility, release prep

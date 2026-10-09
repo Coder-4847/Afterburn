@@ -21,9 +21,16 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, parent?
   return e;
 }
 
-/** Controls shown to the player. Weapon/target keys are listed once the systems exist (Phase 3). */
+/** Controls shown to the player. */
 const SHOWN: { label: string; actions: Action[]; extra?: string }[] = [
   { label: 'Steer', actions: [], extra: 'Mouse (aim reticle)' },
+  { label: 'Fire cannon (hold)', actions: ['fireGun'] },
+  { label: 'Fire missile / bomb / rockets', actions: ['fireMissile'] },
+  { label: 'Select IR / radar / rockets / bombs', actions: ['weapon1', 'weapon2', 'weapon3', 'weapon4'] },
+  { label: 'Cycle target', actions: ['cycleTarget'] },
+  { label: 'Lock at reticle', actions: ['lockTarget'] },
+  { label: 'Flares / chaff', actions: ['flares', 'chaff'] },
+  { label: 'Target view (hold)', actions: ['targetCam'] },
   { label: 'Manual pitch / roll', actions: ['pitchUp', 'pitchDown', 'rollLeft', 'rollRight'] },
   { label: 'Rudder', actions: ['yawLeft', 'yawRight'] },
   { label: 'Throttle', actions: ['throttleUp', 'throttleDown'], extra: 'Mouse wheel' },
@@ -93,8 +100,8 @@ export class Menus {
     const o = el('div', 'overlay solid', this.clear());
     const p = el('div', 'panel wide', o);
     el('p', 'brand', p, 'AFTERBURN');
-    el('h1', 'title', p, 'Free Flight');
-    el('p', 'sub', p, 'Coral Archipelago. Airborne over the Blue island, no enemies. Mouse to steer, hold Space for afterburner. Land on any runway with the gear down (G).');
+    el('h1', 'title', p, 'Training Range');
+    el('p', 'sub', p, 'Coral Archipelago. Airborne east of the Blue island with target balloons dead ahead, a ground-target site on the volcano foothills and three Red drones. Left mouse button fires the cannon, right button the selected weapon. Land and stop on a Blue runway to rearm and repair.');
 
     el('div', 'section', p, 'Aircraft');
     const hb = el('button', 'btn', p);
@@ -104,6 +111,9 @@ export class Menus {
 
     el('div', 'section', p, 'Controls');
     this.controlsList(p);
+
+    el('div', 'section', p, 'Training range');
+    this.select(p, 'Red drones', 'drones', [['passive', 'Passive (evade only)'], ['hostile', 'Hostile (they shoot back)']], undefined, 'Hostile drones hunt you with guns and missiles');
 
     el('div', 'section', p, 'Flight difficulty');
     this.select(p, 'Difficulty', 'difficulty', Object.values(DIFFICULTIES).map((d) => [d.id, d.label]), (v) => this.cb.changed('difficulty'), DIFFICULTIES[this.settings.value.difficulty].description);
@@ -122,7 +132,7 @@ export class Menus {
     const p = el('div', 'panel', o);
     el('p', 'brand', p, 'AFTERBURN');
     el('h1', 'title', p, 'Paused');
-    el('p', 'sub', p, 'Free Flight · Coral Archipelago');
+    el('p', 'sub', p, 'Training Range · Coral Archipelago');
     const mk = (label: string, sub: string, fn: () => void, primary = false) => {
       const b = el('button', 'btn' + (primary ? ' primary' : ''), p);
       b.append(label);
@@ -143,7 +153,7 @@ export class Menus {
     const p = el('div', 'panel wide', o);
     el('p', 'brand', p, 'AFTERBURN');
     el('h1', 'title', p, 'Controls');
-    el('p', 'sub', p, 'Weapons, targeting and countermeasure keys (LMB, RMB, F, C, 1-4, T, Y) arrive with Phase 3. Full rebinding arrives with the settings pass in Phase 5.');
+    el('p', 'sub', p, 'Full rebinding arrives with the settings pass in Phase 5.');
     this.controlsList(p);
     const back = el('button', 'btn', p, 'Back');
     back.style.marginTop = '16px';
@@ -187,6 +197,13 @@ export class Menus {
     this.toggle(p, 'Invert Y axis', 'invertY');
     this.select(p, 'Control scheme', 'controlScheme', [['mouse', 'Mouse aim, Shift/Ctrl throttle'], ['mouse-throttle-ws', 'Mouse aim, W/S throttle']]);
     this.toggle(p, 'Camera shake', 'cameraShake');
+
+    el('div', 'section', p, 'Combat');
+    this.select(p, 'Red drones', 'drones', [['passive', 'Passive (evade only)'], ['hostile', 'Hostile (they shoot back)']], undefined, 'Hostile drones hunt you with guns and missiles');
+    this.toggle(p, 'Damage numbers', 'damageNumbers', 'Floating numbers on your hits');
+
+    el('div', 'section', p, 'Audio');
+    this.slider(p, 'Master volume', 'masterVolume', 0, 1, 0.05, (v) => Math.round(v * 100) + '%');
 
     el('div', 'section', p, 'HUD');
     this.toggle(p, 'Pitch ladder', 'hudPitchLadder');

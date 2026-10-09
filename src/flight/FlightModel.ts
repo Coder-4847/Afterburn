@@ -29,6 +29,8 @@ export interface FlightMods {
   yaw: number;
   /** Constant roll rate added (rad/s), e.g. a missing wing. */
   rollDrift: number;
+  /** Random body-rate noise (rad/s) from a damaged tail. */
+  wobble: number;
 }
 
 export interface SurfaceInfo {
@@ -97,6 +99,10 @@ export class FlightModel {
   crashed: string | null = null;
   /** Set for one tick when a good touchdown happens. */
   touchdown = false;
+  /** Dead aircraft: no controls, no thrust, tumbling toward the ground. */
+  wreck = false;
+  wreckSpin = new Vector3();
+  private wobT = 0;
 
   // derived state for HUD / camera / AI
   speed = 0;
@@ -111,7 +117,7 @@ export class FlightModel {
   /** AoA (rad) needed to hold 1G right now; the mouse-aim controller uses it as a feed-forward. */
   trimAoa = 0;
 
-  mods: FlightMods = { thrust: 1, lift: 1, drag: 1, pitch: 1, roll: 1, yaw: 1, rollDrift: 0 };
+  mods: FlightMods = { thrust: 1, lift: 1, drag: 1, pitch: 1, roll: 1, yaw: 1, rollDrift: 0, wobble: 0 };
 
   constructor(public def: AircraftDef, public difficulty: DifficultyDef) {}
 
@@ -129,7 +135,9 @@ export class FlightModel {
     this.grounded = false;
     this.crashed = null;
     this.gLoad = 1;
-    this.mods = { thrust: 1, lift: 1, drag: 1, pitch: 1, roll: 1, yaw: 1, rollDrift: 0 };
+    this.mods = { thrust: 1, lift: 1, drag: 1, pitch: 1, roll: 1, yaw: 1, rollDrift: 0, wobble: 0 };
+    this.wreck = false;
+    this.wobT = 0;
   }
 
   forward(out: Vector3): Vector3 { return out.set(0, 0, -1).applyQuaternion(this.quat); }
@@ -147,6 +155,10 @@ export class FlightModel {
     this.prevQuat.copy(this.quat);
     this.touchdown = false;
     if (this.crashed) return;
+    if (this.wreck) {
+      this.stepWreck(dt, env);
+      return;
+    }
 
     const f = this.def.flight;
     const diff = this.difficulty;
@@ -247,6 +259,13 @@ export class FlightModel {
     const wYaw = this.yawRate + FLIGHT.stabilityYaw * clamp(this.beta, -0.6, 0.6) * stabSpeed * (1 - Math.min(1, Math.abs(c.yaw)));
 
     _w.set(wPitch, -wYaw, -this.rollRate);
+    if (mods.wobble > 0) {
+      this.wobT += dt;
+      const wt = this.wobT;
+      _w.x += mods.wobble * (Math.sin(wt * 4.1) + 0.6 * Math.sin(wt * 9.7));
+      _w.y += mods.wobble * Math.sin(wt * 3.3 + 1);
+      _w.z += mods.wobble * 0.8 * Math.sin(wt * 5.9 + 2);
+    }
 
     // soft stall: below stall speed (or far past stall AoA) the nose falls through toward the
     // velocity / the ground. World-aware so it also works when inverted or hanging nose-up.
@@ -273,6 +292,25 @@ export class FlightModel {
     }
 
     this.collide(dt, c, env);
+  }
+
+  /** A dead aircraft: ballistic fall with a lazy tumble until it hits something. */
+  private stepWreck(dt: number, env: FlightEnv): void {
+    const sp = this.vel.length();
+    this.vel.y -= G0 * dt;
+    if (sp > 1) this.vel.addScaledVector(this.vel, -(0.00004 * sp) * dt);
+    this.pos.addScaledVector(this.vel, dt);
+    const w = this.wreckSpin.length();
+    if (w > 1e-5) {
+      _dq.setFromAxisAngle(_axis.copy(this.wreckSpin).multiplyScalar(1 / w), w * dt);
+      this.quat.multiply(_dq).normalize();
+    }
+    const s = env.surfaceAt(this.pos.x, this.pos.z, _surf);
+    this.agl = this.pos.y - s.height;
+    if (this.pos.y < s.height + 1) {
+      this.pos.y = s.height + 1;
+      this.crashed = s.height <= 0.01 ? 'Water' : 'Terrain';
+    }
   }
 
   /** Ground contact: landing, rolling, takeoff, and crashing into things. */

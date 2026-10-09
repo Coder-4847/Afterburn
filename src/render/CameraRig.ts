@@ -1,6 +1,6 @@
 import { Euler, Matrix4, PerspectiveCamera, Quaternion, Vector3 } from 'three';
 import { CAMERA } from '../data/tuning';
-import { clamp, damp } from '../core/math';
+import { clamp, damp, wrapPi } from '../core/math';
 
 export type CameraMode = 'chase' | 'cockpit';
 
@@ -39,9 +39,13 @@ export class CameraRig {
   lookYaw = 0;
   lookPitch = 0;
   looking = false;
+  /** When set, the view swings round to keep this world point in sight (target view). */
+  focus: Vector3 | null = null;
   shake = 0;
   shakeEnabled = true;
   private fov = 72;
+  /** The chase camera's lagged orientation (before the look offset), kept for the target view. */
+  private basis = new Quaternion();
   private t = 0;
   private lastMode: CameraMode = 'chase';
 
@@ -81,7 +85,14 @@ export class CameraRig {
     this.t += dt;
 
     // return the head to centre when not looking
-    if (!this.looking) {
+    if (this.focus) {
+      // express the direction to the focus point in the aircraft's frame, then ease the head toward it
+      _off.copy(this.focus).sub(tg.pos).applyQuaternion(_qb.copy(this.mode === 'cockpit' ? tg.quat : this.basis).invert());
+      const ty = Math.atan2(-_off.x, -_off.z);
+      const tp = clamp(Math.atan2(_off.y, Math.hypot(_off.x, _off.z)), -C.lookPitchMax, C.lookPitchMax);
+      this.lookYaw += wrapPi(ty - this.lookYaw) * (1 - Math.exp(-7 * dt));
+      this.lookPitch = damp(this.lookPitch, tp, 7, dt);
+    } else if (!this.looking) {
       this.lookYaw = damp(this.lookYaw, 0, C.lookReturn, dt);
       this.lookPitch = damp(this.lookPitch, 0, C.lookReturn, dt);
     }
@@ -127,6 +138,7 @@ export class CameraRig {
 
     _m.lookAt(_look.set(0, 0, 0), this.fwd, this.up);
     _qb.setFromRotationMatrix(_m);
+    this.basis.copy(_qb);
     _ql.setFromEuler(_e.set(this.lookPitch, this.lookYaw, 0));
     _qb.multiply(_ql);
 
