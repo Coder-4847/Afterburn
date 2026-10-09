@@ -1,0 +1,46 @@
+import type { AircraftDef } from '../../aircraft/AircraftDef';
+
+/** Phase 1 placeholder (F-16C class). Phase 2 adds the full roster alongside it. */
+export const F16C: AircraftDef = {
+  id: 'f16c',
+  name: 'F-16C',
+  fullName: 'F-16C Fighting Falcon',
+  faction: 'west',
+  role: 'Multirole fighter',
+  flight: {
+    stallSpeed: 56,
+    maxSpeed: 580,
+    twMil: 0.62,
+    twAb: 1.08,
+    pitchRate: 0.72,
+    rollRate: 3.8,
+    yawRate: 0.38,
+    gLimit: 9,
+    aoaStall: 26,
+    gearHeight: 2.2,
+    bellyHeight: 1.1,
+  },
+  ratings: { speed: 4, agility: 5, firepower: 3, durability: 2, stealth: 2 },
+  model: {
+    length: 15,
+    sections: [
+      [0.0, 0.0, 0.0, 0],
+      [0.03, 0.2, 0.2, 0],
+      [0.12, 0.5, 0.5, 0],
+      [0.26, 0.85, 0.78, 0.0],
+      [0.4, 1.0, 0.92, 0.0],
+      [0.62, 0.98, 0.88, 0.02],
+      [0.8, 0.82, 0.74, 0.08],
+      [0.94, 0.66, 0.58, 0.1],
+      [1.0, 0.58, 0.52, 0.1],
+    ],
+    wing: { zRoot: 0.42, rootChord: 5.2, tipChord: 1.2, span: 9.4, sweep: 3.0, thickness: 0.26, y: -0.1, dihedral: 0 },
+    hstab: { zRoot: 0.8, rootChord: 3.2, tipChord: 1.1, span: 5.6, sweep: 1.5, y: 0.0, dihedral: -0.05 },
+    fins: [{ x: 0, zRoot: 0.68, rootChord: 3.6, tipChord: 1.3, height: 3.1, sweep: 1.9, cant: 0 }],
+    engines: 1,
+    nozzleRadius: 0.55,
+    canopyZ: 0.28,
+    colors: { body: 0x8b95a1, accent: 0x3aa0ff, dark: 0x2a3038 },
+  },
+  camera: { distance: 26, height: 5.5, cockpit: [0, 0.95, -3.4] },
+};
