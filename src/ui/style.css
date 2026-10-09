@@ -101,3 +101,41 @@ input[type='range'] { width: 150px; accent-color: var(--accent); }
 .crash.show { opacity: 1; }
 .crash b { font-size: 28px; letter-spacing: 0.32em; color: var(--danger); font-weight: 600; }
 .crash span { font-size: 13px; letter-spacing: 0.16em; color: var(--text); }
+
+/* ---------------- hangar ---------------- */
+.hangar { position: absolute; inset: 0; pointer-events: none; }
+.hg-panel { position: absolute; top: 16px; bottom: 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 22px 22px 18px; overflow: auto; pointer-events: auto; backdrop-filter: blur(6px); }
+.hg-list { left: 16px; width: min(270px, 34vw); }
+.hg-info { right: 16px; width: min(360px, 40vw); }
+.hg-item { display: flex; flex-direction: column; align-items: flex-start; width: 100%; background: transparent; border: 1px solid transparent; border-left: 2px solid transparent; color: var(--text); font: inherit; text-align: left; padding: 7px 10px; margin: 0 0 2px; cursor: pointer; border-radius: 2px; }
+.hg-item:hover { background: rgba(95, 224, 255, 0.06); }
+.hg-item.active { background: rgba(95, 224, 255, 0.1); border-left-color: var(--accent); }
+.hg-name { font-size: 14px; letter-spacing: 0.03em; }
+.hg-role { font-size: 11px; color: var(--muted); }
+.hg-blurb { font-size: 13px; line-height: 1.55; color: #b9c4cf; margin: 0 0 16px; }
+.hg-stats { margin: 0 0 14px; }
+.hg-stat { display: flex; align-items: center; justify-content: space-between; padding: 5px 0; font-size: 13px; }
+.hg-stat-l { color: var(--muted); }
+.hg-bar { display: flex; gap: 4px; }
+.hg-bar i { width: 26px; height: 6px; background: rgba(255, 255, 255, 0.1); border-radius: 1px; }
+.hg-bar i.on { background: var(--accent); box-shadow: 0 0 8px rgba(95, 224, 255, 0.35); }
+.hg-grid { margin: 0 0 16px; }
+.hg-actions .btn { margin-bottom: 8px; }
+.hg-toolbar { position: absolute; left: 50%; transform: translateX(-50%); bottom: 22px; display: flex; gap: 8px; align-items: center; pointer-events: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 8px 12px; }
+.hg-tog { font: inherit; font-size: 12px; letter-spacing: 0.05em; color: var(--muted); background: transparent; border: 1px solid var(--line-strong); border-radius: 3px; padding: 6px 12px; cursor: pointer; }
+.hg-tog.on { color: var(--accent); border-color: var(--accent); background: rgba(95, 224, 255, 0.08); }
+.hg-hint { font-size: 11px; color: var(--muted); margin-left: 8px; }
+@media (max-width: 900px) { .hg-info { width: min(300px, 44vw); } .hg-hint { display: none; } }
+
+/* ---------------- screen effects ---------------- */
+.hud-glare { position: absolute; left: 0; top: 0; width: 0; height: 0; pointer-events: none; mix-blend-mode: screen; opacity: 0; }
+.hud-glare i { position: absolute; border-radius: 50%; transform: translate(-50%, -50%); }
+.hud-veil { position: absolute; inset: 0; background: radial-gradient(ellipse at center, rgba(228, 234, 242, 0.92), rgba(205, 214, 226, 0.97)); opacity: 0; pointer-events: none; }
+
+/* cockpit-lite: dark canopy bow, side rails and a dashboard shade around the view */
+.hud-canopy { position: absolute; inset: 0; pointer-events: none; display: none;
+  background:
+    linear-gradient(to bottom, rgba(6, 8, 11, 0.96) 0, rgba(6, 8, 11, 0.7) 3.5%, rgba(6, 8, 11, 0) 9%),
+    linear-gradient(to top, rgba(6, 8, 11, 0.98) 0, rgba(6, 8, 11, 0.94) 7%, rgba(6, 8, 11, 0.5) 11%, rgba(6, 8, 11, 0) 17%),
+    linear-gradient(to right, rgba(6, 8, 11, 0.92) 0, rgba(6, 8, 11, 0.55) 2.5%, rgba(6, 8, 11, 0) 7%),
+    linear-gradient(to left, rgba(6, 8, 11, 0.92) 0, rgba(6, 8, 11, 0.55) 2.5%, rgba(6, 8, 11, 0) 7%); }

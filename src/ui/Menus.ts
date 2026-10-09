@@ -7,6 +7,8 @@ export interface MenuCallbacks {
   resume(): void;
   respawnAir(): void;
   respawnRunway(): void;
+  hangar(): void;
+  aircraftName(): string;
   /** Called after any setting changes that needs a world rebuild (time of day). */
   changed(key: keyof Settings): void;
 }
@@ -94,6 +96,12 @@ export class Menus {
     el('h1', 'title', p, 'Free Flight');
     el('p', 'sub', p, 'Coral Archipelago. Airborne over the Blue island, no enemies. Mouse to steer, hold Space for afterburner. Land on any runway with the gear down (G).');
 
+    el('div', 'section', p, 'Aircraft');
+    const hb = el('button', 'btn', p);
+    hb.append(this.cb.aircraftName());
+    el('small', '', hb, 'Open the hangar to compare and choose from 14 aircraft');
+    hb.addEventListener('click', () => this.cb.hangar());
+
     el('div', 'section', p, 'Controls');
     this.controlsList(p);
 
@@ -124,6 +132,7 @@ export class Menus {
     mk('RESUME', '', () => this.cb.resume(), true);
     mk('Respawn in the air', 'Restart over the Blue island at cruise speed', () => this.cb.respawnAir());
     mk('Start on the runway', 'Takeoff practice: throttle up, hold Space, pull up at ~270 km/h', () => this.cb.respawnRunway());
+    mk('Hangar', `Now flying: ${this.cb.aircraftName()}. Changing aircraft respawns you.`, () => this.cb.hangar());
     mk('Settings', 'Graphics, controls, assists', () => this.showSettings());
     mk('Controls', 'Key bindings', () => this.showControls());
     this.visible = true;

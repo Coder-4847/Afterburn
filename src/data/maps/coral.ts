@@ -75,6 +75,7 @@ export const CORAL: MapDef = {
     { id: 'red-bravo', team: 'red', name: 'Red Bravo', x: 5600, z: 5200, heading: 250, length: 1500, width: 48, elevation: 12 },
     { id: 'red-charlie', team: 'red', name: 'Red Charlie', x: 5200, z: -5400, heading: 290, length: 1500, width: 48, elevation: 12 },
   ],
+  clouds: { base: 1650, top: 2500, coverage: 0.36, scale: 1 },
   boundary: 9600,
   spawn: { x: -5200, z: 500, heading: 90, altitude: 650, speed: 210 },
 };

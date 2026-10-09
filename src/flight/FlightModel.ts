@@ -205,7 +205,7 @@ export class FlightModel {
     // parasitic drag is derived so that max thrust balances drag at maxSpeed (sea level)
     const k0 = (f.twAb * G0) / (f.maxSpeed * f.maxSpeed);
     const dragFactor =
-      1 + FLIGHT.inducedDrag * clA * clA + 4 * this.beta * this.beta + FLIGHT.gearDrag * this.gearPos + (c.airbrake ? FLIGHT.airbrakeDrag : 0);
+      1 + FLIGHT.inducedDrag * f.energyBleed * clA * clA + 4 * this.beta * this.beta + FLIGHT.gearDrag * this.gearPos + (c.airbrake ? FLIGHT.airbrakeDrag : 0);
     const dragAcc = k0 * rho * q2 * dragFactor * mods.drag;
 
     const tw = lerp(f.twMil * (FLIGHT.idleThrust + (1 - FLIGHT.idleThrust) * this.power), f.twAb, this.abLevel);
@@ -222,7 +222,8 @@ export class FlightModel {
 
     // ---- rotation -------------------------------------------------------------------
     // authority grows with airspeed; pitch rate is also capped by the G limit at high speed
-    const auth = lerp(FLIGHT.authorityMin, 1, smoothstep(vs * FLIGHT.authorityStart, vs * FLIGHT.authorityFull, speed));
+    const tv = f.thrustVectoring;
+    const auth = lerp(lerp(FLIGHT.authorityMin, 0.8, tv), 1, smoothstep(vs * FLIGHT.authorityStart, vs * FLIGHT.authorityFull, speed));
     const gAvail = f.gLimit * diff.gMul;
     const vref = Math.max(speed, 50);
     const pitchPos = Math.min(f.pitchRate, (gAvail * G0) / vref);
@@ -230,7 +231,7 @@ export class FlightModel {
     let pTarget = c.pitch >= 0 ? c.pitch * pitchPos : c.pitch * pitchNeg;
 
     // angle-of-attack limiter: fades out pitch commands that would drive AoA past stall
-    const aLim = c.pitch >= 0 ? aStall : aStall * 0.7;
+    const aLim = (c.pitch >= 0 ? aStall : aStall * 0.7) * (1 + 0.18 * tv);
     if (c.pitch * this.aoa > 0) {
       pTarget *= 1 - diff.aoaLimiter * smoothstep(0.7 * aLim, aLim, Math.abs(this.aoa));
     }
@@ -252,6 +253,7 @@ export class FlightModel {
     let stall = clamp((vs - speed) / (vs * FLIGHT.stallBand), 0, 1);
     const aoaExcess = clamp((Math.abs(this.aoa) - aStall * 1.05) / (aStall * 0.4), 0, 1) * 0.6;
     stall = Math.max(stall, aoaExcess);
+    stall *= 1 - 0.6 * tv; // vectored thrust keeps the nose controllable
     if (this.grounded) stall = 0;
     this.stallLevel = stall;
     if (stall > 0) {

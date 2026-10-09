@@ -5,8 +5,9 @@ damage model (coming), and a forgiving, fun feel. It is a fully static web app: 
 asset downloads. Terrain, aircraft, textures and (later) audio are all generated in code, so the repository is
 self-contained and deploys straight to GitHub Pages.
 
-> **Status: Phase 1 of 6 (foundation, flight, world).** One placeholder aircraft, one map (Coral Archipelago),
-> free flight with takeoff and landing. Weapons, AI, the full roster, other maps and game modes arrive in later phases.
+> **Status: Phase 2 of 6 (aircraft roster and visual polish).** 14 aircraft with distinct models and handling, a hangar,
+> post-processing, clouds and contrails, on one map (Coral Archipelago) with free flight, takeoff and landing. Weapons, AI,
+> the other maps and the game modes arrive in later phases.
 
 ## Run it
 
@@ -19,7 +20,7 @@ npm run preview    # serve the production build locally
 
 Requires a browser with WebGL2 (current Chrome, Edge, Firefox or Safari) and Node 18+ for development.
 
-## Controls (Phase 1)
+## Controls
 
 Mouse-aim is the default scheme: the mouse moves a reticle, and the aircraft banks and pulls to bring its nose onto it.
 
@@ -53,6 +54,41 @@ Landing anywhere other than a runway, or with the gear up, is a crash; you respa
 
 Arcade mode also has terrain avoidance: **PULL UP** warns, then an auto pull-up takes over when impact is imminent.
 
+## Aircraft roster
+
+Open the **Hangar** from the start screen or the pause menu: a 3D viewer (drag to rotate, scroll to zoom) with gear, afterburner and
+control-surface demos, and a stat sheet with 1-5 star ratings for Speed, Agility, Firepower, Durability and Stealth. Changing aircraft
+respawns you. Your choice is saved.
+
+| West | Russia | China |
+|---|---|---|
+| F-22 Raptor | Su-57 Felon | J-20 Mighty Dragon |
+| F-16C Fighting Falcon | Su-35S Flanker-E | J-10C Vigorous Dragon |
+| F/A-18E Super Hornet | Su-27 Flanker | J-16 |
+| F-15C Eagle | MiG-29 Fulcrum | J-35 |
+| Rafale C | | |
+| Eurofighter Typhoon | | |
+
+Each has its own silhouette (canards, delta or swept wings, twin or canted tails, ventral fins, chin or side intakes, wingtip pods,
+thrust-vectoring nozzles) and its own handling: stall speed, thrust, G limit, pitch and roll rate, how quickly it bleeds energy in
+hard turns, and whether thrust vectoring keeps it controllable at low speed. Ailerons, flaps, tailplanes, canards, rudders, the
+airbrake and the landing gear animate from the actual flight controls.
+
+### Adding an aircraft
+
+1. Copy any file in `src/data/aircraft/` and edit the numbers (`flight` for handling, `model` for the shape, `ratings` for the hangar).
+2. Import it in `src/data/aircraft/index.ts` and append it to `AIRCRAFT_LIST`.
+
+That's all: the hangar, selection and flight model pick it up.
+
+### Using your own model (.glb)
+
+Drop `public/models/<aircraft id>.glb` into the project (for example `public/models/f22.glb`) and that aircraft uses it instead of the
+procedural build, with no code changes. If the file is missing, the procedural model is used. Conventions: nose toward -Z, up +Y; any
+scale (it is resized to the aircraft's length and centred). Optional node names animate: `aileron_l` / `aileron_r`,
+`elevator_l` / `elevator_r`, `rudder`, and anything starting with `gear` is hidden when the gear is up. The afterburner is attached
+automatically.
+
 ## Tuning the feel
 
 Everything lives in config files, no code changes needed.
@@ -77,7 +113,10 @@ Quick guide for the most common tweaks:
 
 ## Graphics quality
 
-Low / Medium / High / Ultra, with auto-detect by default (GPU string and device hints). **Adaptive resolution** lowers the
+Low / Medium / High / Ultra, with auto-detect by default (GPU string and device hints). Low renders directly with no
+post-processing. Medium and above render in HDR with MSAA, bloom (sun, afterburners, runway lights, glints) and ACES tone mapping,
+plus sun glare, speed streaks, contrails (above about 3,600 m), wingtip vortices (hard pulls), cumulus clouds you can fly through
+and shadows. Cloud count, shadow resolution, terrain detail and effect density all scale per tier (`src/render/quality.ts`). **Adaptive resolution** lowers the
 render scale automatically if the frame rate drops and raises it again when things are stable. Press **F3** for live stats.
 Target: 60 FPS on a mid-range laptop; Phase 6 is the dedicated 10v10 optimisation pass.
 
@@ -87,16 +126,16 @@ Target: 60 FPS on a mid-range laptop; Phase 6 is the dedicated 10v10 optimisatio
 src/
   core/      game loop, input, settings, math helpers
   flight/    flight model, mouse-aim controller, terrain assist
-  aircraft/  aircraft definitions, procedural jet builder, aircraft entity
-  world/     terrain (chunked LOD), sky, water, airstrips, noise, heightmap
-  render/    renderer wrapper, camera rig, quality presets
+  aircraft/  aircraft schema, procedural jet builder (+ materials, afterburner, trails), .glb override loader, aircraft entity
+  world/     terrain (chunked LOD), sky, water, clouds, airstrips, noise, heightmap
+  render/    renderer + post-processing chain, camera rig, quality presets, particle system, hangar scene
   ui/        HUD (canvas + DOM), menus, styles
   data/      aircraft, maps, difficulty, tuning (all data-driven)
   weapons/ damage/ ai/ audio/ modes/   reserved for later phases
 ```
 
 Aircraft, maps and (later) weapons and modes are plain data objects: adding content means adding a file under
-`src/data`. A `.glb` override per aircraft is planned for Phase 2.
+`src/data`.
 
 ## Deploying to GitHub Pages
 
@@ -117,8 +156,8 @@ Nothing is deployed until you push.
 
 ## Roadmap
 
-1. **Foundation, flight, world** (this phase)
-2. Aircraft roster (14 jets), animated surfaces, post-processing, clouds, hangar
+1. Foundation, flight, world (done)
+2. **Aircraft roster (14 jets), animated surfaces, post-processing, clouds, hangar** (this phase)
 3. Weapons, countermeasures, module damage model, training targets
 4. AI pilots, all three maps, airstrip rearm/repair, minimap
 5. Game modes (1v1 to 10v10, Training), menus, scoreboards, rebinding, music

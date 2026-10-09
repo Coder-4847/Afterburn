@@ -76,6 +76,16 @@ export interface WaterDef {
   waveStrength: number;
 }
 
+export interface CloudDef {
+  /** Cloud base and the highest tops (m above sea level). */
+  base: number;
+  top: number;
+  /** 0..1: how much of the map is covered. */
+  coverage: number;
+  /** Puff size multiplier. */
+  scale: number;
+}
+
 export interface MapDef {
   id: string;
   name: string;
@@ -89,6 +99,7 @@ export interface MapDef {
   water: WaterDef;
   lighting: Record<TimeOfDay, LightingPreset>;
   airstrips: AirstripDef[];
+  clouds?: CloudDef;
   /** Half-extent of the combat zone (m). Leaving it starts the return-to-combat countdown. */
   boundary: number;
   /** Default start for free flight: position, heading (deg), altitude. */

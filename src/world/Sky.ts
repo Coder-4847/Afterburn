@@ -134,7 +134,7 @@ const _tmp = new Color();
 const _warm = new Color();
 
 /** Fog colour for the current view: horizon colour, warmed toward the sun when looking at it. */
-export function fogColorFor(u: SkyUniforms, viewDirXZ: Vector3, exposure: number, out: Color): Color {
+export function fogColorFor(u: SkyUniforms, viewDirXZ: Vector3, exposure: number, out: Color, tonemap = true): Color {
   const sd = u.uSunDir.value;
   const sl = Math.hypot(sd.x, sd.z) || 1;
   const facing = Math.max(0, (viewDirXZ.x * sd.x + viewDirXZ.z * sd.z) / sl);
@@ -146,5 +146,6 @@ export function fogColorFor(u: SkyUniforms, viewDirXZ: Vector3, exposure: number
   _tmp.r += u.uSunColor.value.r * glow;
   _tmp.g += u.uSunColor.value.g * glow;
   _tmp.b += u.uSunColor.value.b * glow;
-  return acesTonemap(_tmp, exposure, out);
+  // with the HDR post chain, fog is mixed before tone mapping, so the raw horizon colour already matches the sky
+  return tonemap ? acesTonemap(_tmp, exposure, out) : out.copy(_tmp);
 }

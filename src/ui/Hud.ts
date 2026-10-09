@@ -28,6 +28,12 @@ export interface HudData {
   nearestStrip: { name: string; dist: number } | null;
   cameraMode: 'chase' | 'cockpit';
   visible: boolean;
+  /** Sun glare: screen position (px) and strength 0..1, or null. */
+  glare: { x: number; y: number; a: number } | null;
+  /** 0..1 whiteout from flying inside a cloud. */
+  veil: number;
+  /** 0..1 speed streaks at the screen edge. */
+  speedFx: number;
 }
 
 export interface HudOptions {
@@ -76,6 +82,9 @@ export class Hud {
   private msg: HTMLElement;
   private strip: HTMLElement;
   private vignette: HTMLElement;
+  private glare: HTMLElement;
+  private veil: HTMLElement;
+  private canopy: HTMLElement;
   private cache = new Map<HTMLElement, string>();
   options: HudOptions = { unit: 'kmh', ladder: true, tape: true, flightPath: true };
   private time = 0;
@@ -83,6 +92,13 @@ export class Hud {
   constructor(parent: HTMLElement) {
     this.root = el('div', 'hud', parent);
     this.vignette = el('div', 'hud-vignette', this.root);
+    this.glare = el('div', 'hud-glare', this.root);
+    const glow = el('i', '', this.glare);
+    glow.style.cssText = 'width:70vmin;height:70vmin;background:radial-gradient(circle, rgba(255,244,214,0.55) 0%, rgba(255,226,170,0.18) 22%, rgba(255,200,140,0.05) 50%, rgba(255,200,140,0) 70%)';
+    const streak = el('i', '', this.glare);
+    streak.style.cssText = 'width:120vmin;height:1.6vmin;background:linear-gradient(90deg, rgba(255,235,200,0), rgba(255,240,215,0.45), rgba(255,235,200,0))';
+    this.veil = el('div', 'hud-veil', this.root);
+    this.canopy = el('div', 'hud-canopy', this.root);
     this.canvas = el('canvas', 'hud-canvas', this.root);
     this.ctx = this.canvas.getContext('2d')!;
 
@@ -152,6 +168,12 @@ export class Hud {
     const o = this.options;
     this.setVisible(d.visible);
     if (!d.visible) return;
+    if (d.glare && d.glare.a > 0.01) {
+      this.glare.style.opacity = String(d.glare.a);
+      this.glare.style.transform = `translate(${d.glare.x}px, ${d.glare.y}px)`;
+    } else this.glare.style.opacity = '0';
+    this.canopy.style.display = d.cameraMode === 'cockpit' ? 'block' : 'none';
+    this.veil.style.opacity = d.veil > 0.01 ? String(Math.min(0.96, d.veil)) : '0';
 
     // ---- DOM readouts ----
     const spd = o.unit === 'kmh' ? d.speed * 3.6 : o.unit === 'kt' ? d.speed * 1.94384 : d.speed;
@@ -199,6 +221,7 @@ export class Hud {
     c.shadowColor = 'rgba(0,0,0,0.55)';
     c.shadowBlur = 3;
 
+    if (d.speedFx > 0.02) this.drawSpeedLines(c, d.speedFx);
     if (o.tape) this.drawTape(c, d.heading);
     if (o.ladder) this.drawLadder(c, d, cam);
     this.drawMarkers(c, d, cam);
@@ -212,6 +235,32 @@ export class Hud {
     }
     this.set(e, w.t);
     e.className = 'warn ' + w.cls;
+  }
+
+  /** Streaks racing outward from the centre, only in the periphery. Pure feel: no information. */
+  private drawSpeedLines(c: CanvasRenderingContext2D, k: number): void {
+    const cx = this.w / 2;
+    const cy = this.h / 2;
+    const R = Math.hypot(cx, cy);
+    c.save();
+    c.shadowBlur = 0;
+    c.lineWidth = 1.2;
+    for (let i = 0; i < 38; i++) {
+      const h1 = Math.sin(i * 127.1) * 43758.5453;
+      const h2 = Math.sin(i * 311.7) * 43758.5453;
+      const h3 = Math.sin(i * 74.7) * 43758.5453;
+      const a = (h1 - Math.floor(h1)) * Math.PI * 2;
+      const speed = 0.7 + (h2 - Math.floor(h2)) * 0.9;
+      const ph = ((h3 - Math.floor(h3)) + this.time * speed * 0.9) % 1;
+      const r0 = R * (0.42 + ph * 0.55);
+      const len = R * (0.05 + ph * 0.12 * k);
+      c.strokeStyle = `rgba(235,245,255,${0.5 * k * Math.sin(ph * Math.PI)})`;
+      c.beginPath();
+      c.moveTo(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0);
+      c.lineTo(cx + Math.cos(a) * (r0 + len), cy + Math.sin(a) * (r0 + len));
+      c.stroke();
+    }
+    c.restore();
   }
 
   private drawTape(c: CanvasRenderingContext2D, heading: number): void {

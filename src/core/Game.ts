@@ -1,6 +1,8 @@
 import { Vector3 } from 'three';
 import { Aircraft } from '../aircraft/Aircraft';
-import { F16C } from '../data/aircraft/f16c';
+import { cameraFor } from '../aircraft/AircraftDef';
+import { TrailEmitter } from '../aircraft/Trails';
+import { getAircraft } from '../data/aircraft';
 import { DIFFICULTIES } from '../data/difficulty';
 import { MAPS } from '../data/maps';
 import { FLIGHT, TERRAIN_ASSIST, WORLD_BOUNDARY } from '../data/tuning';
@@ -9,15 +11,18 @@ import { scanTerrain, type TerrainThreat } from '../flight/TerrainAssist';
 import type { SurfaceInfo } from '../flight/FlightModel';
 import { CameraRig } from '../render/CameraRig';
 import { GameRenderer } from '../render/GameRenderer';
+import { HangarScene } from '../render/HangarScene';
+import { ParticleSystem } from '../render/Particles';
 import { QUALITY, detectQuality, type QualityPreset } from '../render/quality';
 import { Hud, type HudData } from '../ui/Hud';
+import { HangarUI } from '../ui/Hangar';
 import { Menus } from '../ui/Menus';
 import { World } from '../world/World';
-import { clamp, DEG, yieldToMain } from './math';
+import { clamp, DEG, smoothstep, yieldToMain } from './math';
 import { Input } from './Input';
 import { SettingsStore, type QualityLevel, type Settings } from './Settings';
 
-type GameState = 'loading' | 'ready' | 'playing' | 'paused';
+type GameState = 'loading' | 'ready' | 'playing' | 'paused' | 'hangar';
 
 const TEAM_BLUE = 0x3aa0ff;
 const _fwd = new Vector3();
@@ -25,6 +30,8 @@ const _vel = new Vector3();
 const _tmp = new Vector3();
 const _surf: SurfaceInfo = { height: 0, onRunway: false, onApron: false };
 const _mouse = { x: 0, y: 0 };
+const _cam = new Vector3();
+const _sunP = new Vector3();
 
 /**
  * Owns the main loop and wires everything together.
@@ -42,6 +49,12 @@ export class Game {
   private world!: World;
   private player!: Aircraft;
   private aim = new MouseAim();
+  private hangar!: HangarScene;
+  private hangarUi!: HangarUI;
+  private hangarReturn: 'ready' | 'paused' = 'ready';
+  private smoke!: ParticleSystem;
+  private fire!: ParticleSystem;
+  private trails!: TrailEmitter;
   private quality!: QualityPreset;
   private detected: QualityLevel = 'medium';
 
@@ -96,10 +109,13 @@ export class Game {
       resume: () => void this.resume(),
       respawnAir: () => { this.spawnAir(); void this.resume(); },
       respawnRunway: () => { this.spawnRunway(); void this.resume(); },
+      hangar: () => this.openHangar(),
+      aircraftName: () => getAircraft(this.settings.value.aircraftId).fullName,
       changed: (k) => this.applySetting(k),
     });
 
     window.addEventListener('resize', () => this.onResize());
+    window.addEventListener('keydown', (e) => { if (e.code === 'Escape' && this.state === 'hangar') this.closeHangar(); });
     document.addEventListener('visibilitychange', () => { if (document.hidden) this.pause(); });
     window.addEventListener('blur', () => this.pause());
     document.addEventListener('pointerlockchange', () => {
@@ -124,11 +140,21 @@ export class Game {
     const map = MAPS.coral;
     this.world = await World.create(map, this.renderer.gl, this.quality, this.settings.value.timeOfDay, progress);
 
-    const diff = DIFFICULTIES[this.settings.value.difficulty];
-    this.player = new Aircraft(F16C, diff, TEAM_BLUE);
-    this.world.scene.add(this.player.object);
-    this.spawnAir();
+    this.smoke = new ParticleSystem(9000, false, true);
+    this.fire = new ParticleSystem(3500, true, false);
+    this.world.scene.add(this.smoke.points, this.fire.points);
+    this.trails = new TrailEmitter(this.smoke);
+    this.world.fogToneMapped = !this.renderer.postActive;
+    this.setAircraft(this.settings.value.aircraftId);
     this.applyAllSettings();
+
+    this.hangar = new HangarScene(this.renderer.gl);
+    this.hangarUi = new HangarUI(this.root.querySelector('#ui') as HTMLElement, this.hangar, this.canvas, {
+      select: (id) => { this.settings.set('aircraftId', id); this.setAircraft(id); this.closeHangar(); },
+      back: () => this.closeHangar(),
+    });
+    this.hangarUi.onPreview = (def) => this.hangar.setAircraft(def, TEAM_BLUE);
+    this.hangar.resize(window.innerWidth / window.innerHeight);
     this.world.terrain.prewarm(this.rig.camera.position);
     // two warm-up frames so shaders compile before the menu appears
     this.renderFrame(0);
@@ -158,6 +184,7 @@ export class Game {
         this.renderer.adaptiveScale = 1;
         this.renderer.setQuality(this.quality, s.resolutionScale);
         this.world?.setQuality(this.quality);
+        if (this.world) this.world.fogToneMapped = !this.renderer.postActive;
         break;
       case 'fov': this.rig.baseFov = s.fov; break;
       case 'timeOfDay': this.world?.setTimeOfDay(s.timeOfDay); break;
@@ -173,6 +200,7 @@ export class Game {
   private onResize(): void {
     this.renderer.applySize();
     this.rig.resize(window.innerWidth / window.innerHeight);
+    this.hangar?.resize(window.innerWidth / window.innerHeight);
     this.hud.resize();
   }
 
@@ -226,6 +254,37 @@ export class Game {
     this.input.exitLock();
     document.body.classList.remove('playing');
     this.menus.showPause();
+  }
+
+  // ---- aircraft selection / hangar ------------------------------------------------------------
+
+  /** Swap the player's aircraft (new flight model + model) and respawn in the air. */
+  private setAircraft(id: string): void {
+    const def = getAircraft(id);
+    if (this.player && this.player.def.id === def.id) return;
+    const old = this.player;
+    const p = new Aircraft(def, DIFFICULTIES[this.settings.value.difficulty], TEAM_BLUE);
+    this.player = p;
+    this.world.scene.add(p.object);
+    old?.dispose();
+    void p.loadOverride(); // swaps in public/models/<id>.glb if one exists
+    this.trails?.reset();
+    this.spawnAir();
+  }
+
+  private openHangar(): void {
+    this.hangarReturn = this.state === 'paused' ? 'paused' : 'ready';
+    this.state = 'hangar';
+    this.menus.hide();
+    this.hud.setVisible(false);
+    this.hangarUi.show(this.settings.value.aircraftId);
+  }
+
+  private closeHangar(): void {
+    this.hangarUi.hide();
+    this.state = this.hangarReturn;
+    if (this.hangarReturn === 'paused') this.menus.showPause();
+    else this.menus.showReady();
   }
 
   private say(text: string, seconds = 2.2): void {
@@ -284,7 +343,33 @@ export class Game {
     this.crashTimer = 3.4;
     this.player.object.visible = false;
     this.rig.addShake(1.2);
+    this.explode(reason);
     this.menus.showCrash(reason === 'Left combat zone' ? 'OUT OF BOUNDS' : 'CRASHED', reason, 'Respawning in 3');
+  }
+
+  /** Fireball and smoke on impact (or a white splash if we hit the sea). */
+  private explode(reason: string): void {
+    const f = this.player.flight;
+    const p = f.pos;
+    const water = reason === 'Water' || this.groundAt(p.x, p.z) <= 0.01;
+    const n = Math.round(60 * this.quality.trails + 20);
+    for (let i = 0; i < n; i++) {
+      const th = Math.random() * Math.PI * 2;
+      const up = Math.random();
+      const sp = 15 + Math.random() * 70;
+      const vx = Math.cos(th) * sp * (1 - up * 0.4) + f.vel.x * 0.25;
+      const vz = Math.sin(th) * sp * (1 - up * 0.4) + f.vel.z * 0.25;
+      const vy = up * sp * 0.9 + 6;
+      if (water) {
+        // a column of spray: fast, upward, falling back as it fades
+        this.smoke.emit(p.x, p.y, p.z, vx * 0.45, vy * 1.5 + 12, vz * 0.45, 1.6 + Math.random() * 2.2, 3.5, 20, 0.92, 0.96, 1, 0.55, 0.7, 14);
+        if (i % 2 === 0) this.smoke.emit(p.x, p.y, p.z, vx * 0.9, 4 + up * 8, vz * 0.9, 2 + Math.random() * 2, 4, 26, 0.9, 0.95, 1, 0.4, 1.6, 2);
+      } else {
+        this.fire.emit(p.x, p.y + 2, p.z, vx, vy * 0.7, vz, 0.5 + Math.random() * 0.9, 7, 26, 2.6, 1.15 + Math.random() * 0.5, 0.3, 0.9, 2.2);
+        this.smoke.emit(p.x, p.y + 3, p.z, vx * 0.5, vy * 0.8 + 4, vz * 0.5, 4 + Math.random() * 4, 9, 46, 0.07, 0.07, 0.08, 0.75, 0.9, -5);
+        if (i % 2 === 0) this.fire.emit(p.x, p.y + 1, p.z, vx * 1.6, vy * 1.4, vz * 1.6, 1 + Math.random() * 1.8, 1.2, 0.2, 3, 2.2, 1.2, 1, 0.2, 9.8);
+      }
+    }
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -316,7 +401,8 @@ export class Game {
       this.input.endFrame();
     }
 
-    this.renderFrame(this.state === 'playing' ? dt : 0);
+    if (this.state === 'hangar') this.renderHangar(dt);
+    else this.renderFrame(this.state === 'playing' ? dt : 0);
     this.input.endFrame();
     this.updateFps(dt);
   };
@@ -324,23 +410,53 @@ export class Game {
   private renderFrame(dt: number): void {
     const p = this.player;
     p.syncVisual(this.alpha, dt);
+    p.model.root.visible = this.rig.mode !== 'cockpit' || this.crashed; // cockpit-lite: no airframe in view
     if (this.state === 'playing') this.rig.update(dt, this.rigTarget(), this.groundAt);
     this.world.update(dt, this.rig.camera, p.object.position);
-    this.renderer.render(this.world.scene, this.rig.camera);
+    // particles: contrails / vortices follow the aircraft, then everything integrates and is sized for this view
+    if (dt > 0 && !this.crashed) this.trails.update(p, this.quality.trails);
+    const h = this.renderer.drawingHeight;
+    this.smoke.setView(h, this.rig.camera.fov);
+    this.fire.setView(h, this.rig.camera.fov);
+    this.smoke.update(dt);
+    this.fire.update(dt);
+    this.renderer.render(this.world.scene, this.rig.camera, dt);
     this.drawHud(dt);
+  }
+
+  private renderHangar(dt: number): void {
+    this.hangar.update(dt);
+    this.renderer.render(this.hangar.scene, this.hangar.camera, dt);
+  }
+
+  /** Screen position and strength of the sun glare, or null if the sun is off-screen / hidden behind terrain. */
+  private sunGlare(): { x: number; y: number; a: number } | null {
+    if (!this.quality.screenFx || this.state === 'ready') return null;
+    const cam = this.rig.camera;
+    const sd = this.world.sky.sunDir;
+    cam.getWorldDirection(_cam);
+    const d = _cam.dot(sd);
+    if (d < 0.25) return null;
+    for (const t of [500, 1400, 3200, 7000]) {
+      _sunP.copy(cam.position).addScaledVector(sd, t);
+      if (_sunP.y < this.groundAt(_sunP.x, _sunP.z)) return null; // terrain / sea blocks the sun
+    }
+    _sunP.copy(cam.position).addScaledVector(sd, 1000).project(cam);
+    return { x: (_sunP.x * 0.5 + 0.5) * window.innerWidth, y: (-_sunP.y * 0.5 + 0.5) * window.innerHeight, a: Math.pow(d, 8) * 0.55 * (1 - this.world.cloudInside) };
   }
 
   private rigTarget() {
     const p = this.player;
     const def = p.def;
+    const cf = cameraFor(def);
     return {
       pos: p.object.position,
       quat: p.object.quaternion,
       speedNorm: p.flight.speed / def.flight.maxSpeed,
       ab: p.flight.abLevel,
-      distance: def.camera.distance,
-      height: def.camera.height,
-      cockpit: def.camera.cockpit,
+      distance: cf.distance,
+      height: cf.height,
+      cockpit: cf.cockpit,
     };
   }
 
@@ -517,6 +633,9 @@ export class Game {
       nearestStrip: dNear < 7000 ? { name: near.def.name, dist: dNear } : null,
       cameraMode: this.rig.mode,
       visible: true,
+      glare: this.sunGlare(),
+      veil: this.world.cloudInside,
+      speedFx: this.quality.screenFx && this.state === 'playing' ? smoothstep(0.5, 1, f.speed / p.def.flight.maxSpeed) * 0.55 + f.abLevel * 0.3 : 0,
     };
     this.hud.update(d, this.rig.camera, dt);
   }
@@ -579,6 +698,15 @@ export class Game {
     const fwd = new Vector3();
     return {
       player: this.player, world: this.world, rig: this.rig, input: this.input, aim: this.aim,
+      /** Open the hangar on an aircraft with a fixed camera (for screenshots). */
+      hangarView: async (id: string, yaw = 0.9, pitch = 0.25, ab = false, gear = true, panels = false, wait = 1300) => {
+        if (this.state !== 'hangar') this.openHangar();
+        (this.hangarUi as unknown as { preview(id: string): void }).preview(id);
+        const h = this.hangar;
+        h.autoRotate = false; h.animate = false; h.yaw = yaw; h.pitch = pitch; h.gearDown = gear; h.afterburner = ab;
+        for (const sel of ['.hg-list', '.hg-info', '.hg-toolbar']) (document.querySelector(sel) as HTMLElement).style.display = panels ? '' : 'none';
+        if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+      },
       step: (n = 1) => { for (let i = 0; i < n; i++) this.stepPhysics(FLIGHT.fixedDt); },
       spawnAir: () => this.spawnAir(),
       spawnRunway: () => this.spawnRunway(),

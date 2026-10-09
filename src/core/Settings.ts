@@ -33,6 +33,8 @@ export interface Settings {
   hudHeadingTape: boolean;
   hudFlightPath: boolean;
   seenIntro: boolean;
+  /** Selected aircraft id (see data/aircraft). */
+  aircraftId: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -55,6 +57,7 @@ export const DEFAULT_SETTINGS: Settings = {
   hudHeadingTape: true,
   hudFlightPath: true,
   seenIntro: false,
+  aircraftId: 'f16c',
 };
 
 const KEY = 'afterburn.settings.v1';

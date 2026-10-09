@@ -21,24 +21,39 @@ export interface QualityPreset {
   waterDetail: number; // 0..1
   /** Multiplier on fog density (denser fog hides more distance on weak GPUs). */
   fogScale: number;
+  /** Post-processing chain (bloom + MSAA + tone mapping). Off = direct render with built-in tone mapping. */
+  post: boolean;
+  /** MSAA samples in the post chain. */
+  msaa: number;
+  bloomStrength: number;
+  /** Cloud clusters generated per map (0 = no clouds). */
+  clouds: number;
+  /** Scales contrail / vortex density. */
+  trails: number;
+  /** Sun glare, speed lines and other screen-space flourishes. */
+  screenFx: boolean;
 }
 
 export const QUALITY: Record<QualityLevel, QualityPreset> = {
   low: {
     level: 'low', pixelRatioCap: 1, antialias: false, shadows: false, shadowMapSize: 1024, shadowExtent: 300,
     terrainShadows: false, lodScale: 0.6, chunkBuildBudget: 3, terrainDetail: false, waterDetail: 0.2, fogScale: 1.35,
+    post: false, msaa: 0, bloomStrength: 0, clouds: 28, trails: 0.5, screenFx: false,
   },
   medium: {
     level: 'medium', pixelRatioCap: 1.25, antialias: true, shadows: true, shadowMapSize: 1024, shadowExtent: 420,
     terrainShadows: false, lodScale: 0.85, chunkBuildBudget: 4, terrainDetail: true, waterDetail: 0.6, fogScale: 1.1,
+    post: true, msaa: 2, bloomStrength: 0.26, clouds: 60, trails: 0.8, screenFx: true,
   },
   high: {
     level: 'high', pixelRatioCap: 1.5, antialias: true, shadows: true, shadowMapSize: 2048, shadowExtent: 520,
     terrainShadows: true, lodScale: 1.0, chunkBuildBudget: 5, terrainDetail: true, waterDetail: 1, fogScale: 1,
+    post: true, msaa: 4, bloomStrength: 0.32, clouds: 100, trails: 1, screenFx: true,
   },
   ultra: {
     level: 'ultra', pixelRatioCap: 2, antialias: true, shadows: true, shadowMapSize: 4096, shadowExtent: 700,
     terrainShadows: true, lodScale: 1.45, chunkBuildBudget: 8, terrainDetail: true, waterDetail: 1, fogScale: 0.9,
+    post: true, msaa: 4, bloomStrength: 0.38, clouds: 150, trails: 1.4, screenFx: true,
   },
 };
 

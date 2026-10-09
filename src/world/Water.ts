@@ -95,7 +95,9 @@ export class Water {
 
           vec3 H = normalize(V + uSunDir);
           float ndh = max(dot(n, H), 0.0);
-          float spec = pow(ndh, 260.0) * 5.0 + pow(ndh, 36.0) * 0.28;
+          float spec = pow(ndh, 220.0) * 2.0 + pow(ndh, 36.0) * 0.2;
+          // glints shimmer when seen from far away: widen and dim them with distance
+          spec *= 1.0 / (1.0 + dist * 0.0007);
           vec3 col = body * (1.0 - F) + refl * F + uSunColor * spec;
 
           // shoreline and reef foam
@@ -116,6 +118,9 @@ export class Water {
         }`,
     });
     // the sky uniforms are shared by reference so a time-of-day change updates the water too
+    // UniformsUtils.merge clones its inputs, so re-point the live uniforms at the shared objects
+    this.material.uniforms.uTime = this.time;
+    this.material.uniforms.uDetail = this.detail;
     for (const k of Object.keys(sky)) this.material.uniforms[k] = sky[k];
 
     const geo = new PlaneGeometry(size, size, 1, 1);

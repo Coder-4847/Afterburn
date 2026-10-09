@@ -15,4 +15,5 @@ game.init().catch((err) => {
 
 if (import.meta.env.DEV) {
   (window as unknown as { afterburn: unknown }).afterburn = game;
+  void import('./core/devtools').then((m) => m.installDevTools(game));
 }

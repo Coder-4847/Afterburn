@@ -8,6 +8,7 @@ import type { TimeOfDay } from '../core/Settings';
 import type { QualityPreset } from '../render/quality';
 import type { FlightEnv, SurfaceInfo } from '../flight/FlightModel';
 import { Airstrip } from './Airstrip';
+import { Clouds } from './Clouds';
 import { Heightmap } from './Heightmap';
 import { makeNoiseTexture } from './NoiseTexture';
 import { Sky, fogColorFor, makeSkyUniforms } from './Sky';
@@ -34,6 +35,12 @@ export class World implements FlightEnv {
   private lightingKey: TimeOfDay = 'day';
   private fogBase = 0.00006;
   private fogExposure = 1;
+  private clouds: Clouds | null = null;
+  private cloudCount = -1;
+  /** False when the HDR post chain is active (fog is then mixed before tone mapping). */
+  fogToneMapped = true;
+  /** Extra fog density from being inside a cloud. */
+  private cloudFog = 0;
 
   private constructor(
     readonly map: MapDef,
@@ -56,6 +63,7 @@ export class World implements FlightEnv {
     this.sun.castShadow = quality.shadows;
     scene.add(this.sun, this.sun.target);
     this.pmrem = new PMREMGenerator(renderer);
+    this.buildClouds(quality.clouds);
     const envSky = new Mesh(new SphereGeometry(50, 32, 16), sky.material);
     envSky.frustumCulled = false;
     this.envScene.add(envSky);
@@ -106,12 +114,29 @@ export class World implements FlightEnv {
     this.scene.environment = this.envTarget.texture;
   }
 
+  private buildClouds(count: number): void {
+    if (count === this.cloudCount) return;
+    this.cloudCount = count;
+    if (this.clouds) {
+      this.scene.remove(this.clouds.mesh);
+      this.clouds.dispose();
+    }
+    this.clouds = new Clouds(this.map, this.sky.uniforms, count);
+    this.scene.add(this.clouds.mesh);
+  }
+
+  /** 0..1 how deep inside cloud the camera is. */
+  get cloudInside(): number {
+    return this.clouds?.inside ?? 0;
+  }
+
   setQuality(q: QualityPreset): void {
     const shadowsChanged = q.shadows !== this.quality.shadows;
     this.quality = q;
+    this.buildClouds(q.clouds);
     this.terrain.setQuality(q);
     this.water.setDetail(q.waterDetail);
-    this.fog.density = this.fogBase * q.fogScale;
+    this.fog.density = this.fogBase * q.fogScale + this.cloudFog;
 
     const r = this.renderer;
     r.shadowMap.enabled = q.shadows;
@@ -177,7 +202,10 @@ export class World implements FlightEnv {
     camera.getWorldDirection(_fwd);
     _fwd.y = 0;
     if (_fwd.lengthSq() > 1e-6) _fwd.normalize();
-    fogColorFor(this.sky.uniforms, _fwd, this.fogExposure, this.fog.color);
+    fogColorFor(this.sky.uniforms, _fwd, this.fogExposure, this.fog.color, this.fogToneMapped);
+    this.clouds?.update(dt, cp);
+    this.cloudFog += (this.cloudInside * 0.0042 - this.cloudFog) * Math.min(1, dt * 4);
+    this.fog.density = this.fogBase * this.quality.fogScale + this.cloudFog;
 
     if (this.quality.shadows) this.updateShadow(focus);
   }
