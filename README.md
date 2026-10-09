@@ -5,10 +5,10 @@ module damage model, and a forgiving, fun feel. It is a fully static web app: no
 asset downloads. Terrain, aircraft, textures and audio are all generated in code, so the repository is
 self-contained and deploys straight to GitHub Pages.
 
-> **Status: Phase 4 of 6 (AI, maps, minimap).** Three maps (Coral Archipelago, Sandstorm Basin, Frostline Alps), AI
-> pilots with three skill levels, a skirmish sortie (you and AI wingmen against AI opponents), airstrip rearm and repair, and a
-> minimap with a full-screen map. Plus everything from Phase 3: 14 aircraft, loadouts, cannon, missiles, rockets, bombs,
-> countermeasures, module damage, procedural audio and a training range. The proper game modes and menus arrive in Phase 5.
+> **Status: Phase 5 of 6 (game modes and menus).** Team Deathmatch from 1v1 to 10v10 against AI (score and time limits, live
+> score, hold-to-show scoreboard, results screen with a rematch), Training Range and Free Flight, a mission-setup screen, full key
+> rebinding, and a procedural music score that follows the action. On top of Phases 1-4: 14 aircraft, three maps, AI pilots,
+> weapons and module damage, minimap. Phase 6 is optimisation, balance and release polish.
 
 ## Run it
 
@@ -42,6 +42,7 @@ Mouse-aim is the default scheme: the mouse moves a reticle, and the aircraft ban
 | **F / C** | Flares / chaff |
 | **X** (hold) | Target view: the camera swings round to keep the target in sight |
 | **M** | Full-screen map (north-up) |
+| **P** (hold) | Scoreboard |
 | **V** | Camera: chase / cockpit |
 | **Z** or **middle mouse** (hold) | Look around |
 | **F3** | FPS / render stats |
@@ -50,7 +51,9 @@ Mouse-aim is the default scheme: the mouse moves a reticle, and the aircraft ban
 An alternate scheme (Settings > Controls) moves throttle to W / S. Sensitivity, invert-Y, FOV, graphics quality,
 difficulty and HUD options are all in the pause menu. Settings persist in `localStorage`.
 
-Full key rebinding UI comes in Phase 5 (the bindings are data-driven already).
+Every key above can be rebound: **Controls and key bindings** on the setup screen or the pause menu. Click a key, then press the new key or
+mouse button (Esc cancels). A key that was already used by another action is taken from it (you are told which). Esc for pause is fixed
+so you can never bind yourself out of the menu. Bindings are saved with the other settings.
 
 ### Taking off and landing
 
@@ -99,7 +102,7 @@ automatically.
 
 ## Maps
 
-Pick one on the start screen (**Sortie > Map**); the world reloads when you press the start button. Each map has three Blue and three
+Pick one on the start screen (**Mission setup > Map**); the world reloads when you press the start button. Each map has three Blue and three
 Red airstrips, its own lighting (day and sunset), and a spawn point for the player.
 
 | Map | Look | Flying |
@@ -112,13 +115,18 @@ Terrain is generated per map from a seed (`src/world/generators`: `archipelago`,
 `src/data/maps/` plus a generator kind. Adding a map: copy one of the map files, change the numbers (and the generator settings in
 `terrain`), and add it to `src/data/maps/index.ts`.
 
-## Sorties, AI pilots and the minimap
+## Game modes, AI pilots and the minimap
 
-**Sortie modes** (start screen):
+**Mission setup** (the start screen) has three modes, three maps, and per-mode options:
 
-- **Training range**: target balloons dead ahead, a ground-target site and three Red drones that evade (or, set to *Hostile*, hunt you).
-- **Skirmish**: you and 0 to 6 AI wingmen (Blue) against 1 to 8 AI opponents (Red). Everyone respawns near their own airstrips a few
-  seconds after dying, so the fight carries on. (Phase 5 turns this into the real modes: team sizes up to 10v10, scoring, timers.)
+- **Team Deathmatch**: you and AI wingmen (Blue) against an AI team (Red), 1v1, 2v2, 3v3, 5v5 or 10v10. Pick a score limit (10 to 50
+  kills), a time limit (none, 5, 10 or 15 minutes) and the AI skill. Only kills against the other team score (crashes do not).
+  The score and clock sit at the top of the screen; hold **P** for the scoreboard (kills, assists, deaths and gun accuracy per
+  pilot). When a team reaches the score limit, or the clock runs out (most kills wins, equal is a draw), the results screen shows
+  the winner and the final table, with **Rematch**, **Mission setup** and **Hangar**. Everyone respawns near their own airstrips a few
+  seconds after dying.
+- **Training Range**: target balloons dead ahead, a ground-target site and three Red drones that evade (or, set to *Hostile*, hunt you).
+- **Free Flight**: an empty sky for practising takeoffs, landings and aerobatics.
 
 **AI pilots** (`src/ai/Pilot.ts`) fly the same mouse-aim control law you do. They patrol, close to missile range and fire radar missiles
 (then turn 40 degrees off to keep the datalink), merge and dogfight with guns and IR missiles, break when someone is on their tail,
@@ -132,6 +140,13 @@ AI pilots do this on a low pass over their own strip.
 **Minimap:** a heading-up radar in the top-left shows terrain, airstrips and aircraft (enemies only inside a 16 km detection radius;
 your selected target is circled; inbound missiles flash). **M** opens the whole map, north-up. The minimap can be switched off in
 Settings > HUD.
+
+## Music and sound
+
+All audio is generated in the browser. Effects (cannon, missiles, explosions, engine, warnings) and a procedural score: a slow pad and
+arpeggio in the menus, and in flight a driving theme (bass, hats, kick, snare, a lead line) whose layers fade in as enemies get close,
+missiles are inbound or you are hurt. Effects volume and music volume are separate sliders in Settings. Browsers only allow audio
+after a click, so the menu music starts on your first click.
 
 ## Weapons and damage
 
@@ -183,6 +198,8 @@ Everything lives in config files, no code changes needed.
 | Hit points per module, fire and leak behaviour | `src/damage/DamageModel.ts` (aircraft `hp` in `src/data/aircraft/*.ts`) |
 | Training range layout and drones | `src/ai/Range.ts`, `src/ai/Drone.ts` |
 | AI skill levels and behaviour | `src/ai/Pilot.ts` (`SKILLS`) |
+| Match rules, limits | `src/modes/Match.ts`, setup options in `src/ui/Menus.ts` |
+| Music themes (tempo, chords, layers) | `src/audio/Music.ts` (`THEMES`) |
 
 Quick guide for the most common tweaks:
 
@@ -214,8 +231,8 @@ src/
   weapons/   combat manager (projectiles, missiles, decoys, explosions), fighter, weapon system, loadouts, targets
   damage/    module damage model
   ai/        pilots (skirmish AI), training-range drones, range layout, skirmish manager
-  audio/     procedural WebAudio
-  modes/     reserved for later phases
+  audio/     procedural WebAudio: effects and the music score
+  modes/     match rules (team scores, limits, winner)
 ```
 
 Aircraft, maps, weapons and (later) modes are plain data objects: adding content means adding a file under
@@ -243,6 +260,6 @@ Nothing is deployed until you push.
 1. Foundation, flight, world (done)
 2. Aircraft roster (14 jets), animated surfaces, post-processing, clouds, hangar (done)
 3. Weapons, countermeasures, module damage model, loadouts, training targets, audio (done)
-4. **AI pilots, all three maps, airstrip rearm/repair, minimap** (this phase)
-5. Game modes (1v1 to 10v10, Training), menus, scoreboards, rebinding, music
+4. AI pilots, all three maps, airstrip rearm/repair, minimap (done)
+5. **Game modes (1v1 to 10v10, Training), menus, scoreboards, rebinding, music** (this phase)
 6. Optimisation, balance, bug sweep, accessibility, release prep

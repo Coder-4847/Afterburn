@@ -14,6 +14,10 @@ export class GameAudio implements CombatAudio {
   private master: GainNode | null = null;
   private noise: AudioBuffer | null = null;
   private volume = 0.7;
+  private musicVol = 0.5;
+  private paused = false;
+  /** Where the music goes (separate from the effects bus so pausing mutes effects but not the score). */
+  musicBus: GainNode | null = null;
   private camPos = new Vector3();
   private camQuat: Quaternion | null = null;
 
@@ -37,6 +41,9 @@ export class GameAudio implements CombatAudio {
         comp.threshold.value = -14;
         comp.ratio.value = 6;
         this.master.connect(comp).connect(this.ctx.destination);
+        this.musicBus = this.ctx.createGain();
+        this.musicBus.gain.value = this.volume * this.musicVol * 0.7;
+        this.musicBus.connect(this.ctx.destination);
         // one shared second of white noise
         const n = this.ctx.sampleRate * 2;
         this.noise = this.ctx.createBuffer(1, n, this.ctx.sampleRate);
@@ -45,21 +52,41 @@ export class GameAudio implements CombatAudio {
         this.startEngine();
       }
       if (this.ctx.state === 'suspended') void this.ctx.resume();
+      this.applyGains();
     } catch {
       this.ctx = null;
     }
   }
 
-  setVolume(v: number): void {
-    this.volume = v;
-    if (this.master && this.ctx) this.master.gain.setTargetAtTime(v, this.ctx.currentTime, 0.05);
+  get context(): AudioContext | null {
+    return this.ctx;
   }
 
-  /** Suspend everything while the game is paused. */
+  get noiseBuffer(): AudioBuffer | null {
+    return this.noise;
+  }
+
+  private applyGains(): void {
+    if (!this.ctx || !this.master || !this.musicBus) return;
+    const t = this.ctx.currentTime;
+    this.master.gain.setTargetAtTime(this.paused ? 0 : this.volume, t, 0.05);
+    this.musicBus.gain.setTargetAtTime(this.volume * this.musicVol * 0.7, t, 0.1);
+  }
+
+  setVolume(v: number): void {
+    this.volume = v;
+    this.applyGains();
+  }
+
+  setMusicVolume(v: number): void {
+    this.musicVol = v;
+    this.applyGains();
+  }
+
+  /** Mute the effects while the game is paused (the music keeps playing). */
   setPaused(p: boolean): void {
-    if (!this.ctx) return;
-    if (p) void this.ctx.suspend();
-    else void this.ctx.resume();
+    this.paused = p;
+    this.applyGains();
   }
 
   setListener(pos: Vector3, quat: Quaternion): void {

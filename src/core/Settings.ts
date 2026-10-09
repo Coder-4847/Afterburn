@@ -8,7 +8,8 @@ export type TimeOfDay = 'day' | 'sunset';
 export type TerrainAssist = 'off' | 'warn' | 'auto';
 export type ControlScheme = 'mouse' | 'mouse-throttle-ws';
 export type DroneMode = 'passive' | 'hostile';
-export type SortieMode = 'training' | 'skirmish';
+/** What you are playing: the range, an empty sky, or a team deathmatch against AI. */
+export type SortieMode = 'training' | 'freeflight' | 'tdm';
 export type AiSkillId = 'rookie' | 'regular' | 'ace';
 
 export interface Settings {
@@ -44,10 +45,12 @@ export interface Settings {
   // sortie setup
   mapId: string;
   sortie: SortieMode;
-  /** AI jets on the player's team (wingmen) and on the enemy team, in a skirmish. */
-  blueAI: number;
-  redAI: number;
+  /** Team deathmatch: players per side (you count as one), score limit (kills), time limit (minutes, 0 = none). */
+  teamSize: number;
+  scoreLimit: number;
+  timeLimit: number;
   aiSkill: AiSkillId;
+  musicVolume: number;
   minimap: boolean;
   /** Selected aircraft id (see data/aircraft). */
   aircraftId: string;
@@ -78,9 +81,11 @@ export const DEFAULT_SETTINGS: Settings = {
   drones: 'passive',
   mapId: 'coral',
   sortie: 'training',
-  blueAI: 2,
-  redAI: 3,
+  teamSize: 3,
+  scoreLimit: 20,
+  timeLimit: 10,
   aiSkill: 'regular',
+  musicVolume: 0.5,
   minimap: true,
   aircraftId: 'f16c',
 };
@@ -97,6 +102,8 @@ export class SettingsStore {
     try {
       const raw = localStorage.getItem(KEY);
       if (raw) Object.assign(this.value, JSON.parse(raw));
+      // older saves called the AI mode "skirmish"
+      if ((this.value.sortie as string) === 'skirmish') this.value.sortie = 'tdm';
     } catch {
       /* storage unavailable or corrupt: keep defaults */
     }

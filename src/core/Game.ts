@@ -3,6 +3,9 @@ import { TrainingRange } from '../ai/Range';
 import { Skirmish } from '../ai/Skirmish';
 import { Aircraft } from '../aircraft/Aircraft';
 import { GameAudio } from '../audio/Audio';
+import { Music } from '../audio/Music';
+import { Match, formatClock } from '../modes/Match';
+import { ScoreboardOverlay, type ScoreData } from '../ui/Scoreboard';
 import { cameraFor } from '../aircraft/AircraftDef';
 import { TrailEmitter } from '../aircraft/Trails';
 import { getAircraft } from '../data/aircraft';
@@ -32,7 +35,7 @@ import { clamp, DEG, smoothstep, yieldToMain } from './math';
 import { Input } from './Input';
 import { SettingsStore, type QualityLevel, type Settings } from './Settings';
 
-type GameState = 'loading' | 'ready' | 'playing' | 'paused' | 'hangar';
+type GameState = 'loading' | 'ready' | 'playing' | 'paused' | 'hangar' | 'results';
 
 const TEAM_BLUE = 0x3aa0ff;
 const _fwd = new Vector3();
@@ -72,6 +75,11 @@ export class Game {
   private fighter!: Fighter;
   private range!: TrainingRange;
   private skirmish: Skirmish | null = null;
+  private match: Match | null = null;
+  private music = new Music(this.audio);
+  private scoreboard!: ScoreboardOverlay;
+  private matchEl!: HTMLElement;
+  private matchText = '';
   private mapId = '';
   private builtSig = '';
   private quality!: QualityPreset;
@@ -145,14 +153,22 @@ export class Game {
       respawnAir: () => { this.spawnAir(); void this.resume(); },
       respawnRunway: () => { this.spawnRunway(); void this.resume(); },
       hangar: () => this.openHangar(),
-      setup: () => { this.state = 'ready'; this.menus.showReady(); },
+      setup: () => { this.builtSig = ''; this.state = 'ready'; this.menus.showReady(); },
+      rematch: () => { this.builtSig = ''; void this.rebuild(); },
       aircraftName: () => getAircraft(this.settings.value.aircraftId).fullName,
       changed: (k) => this.applySetting(k),
     });
 
     this.settings.changed.on((k) => {
-      if (k === 'masterVolume' || k === 'drones') this.applySetting(k);
+      if (k === 'masterVolume' || k === 'musicVolume' || k === 'drones') this.applySetting(k);
     });
+    // browsers only allow audio after a gesture: the first click anywhere starts the menu music
+    window.addEventListener('pointerdown', () => this.audio.unlock(), { once: true });
+    this.scoreboard = new ScoreboardOverlay(ui);
+    this.matchEl = document.createElement('div');
+    this.matchEl.className = 'hud-match';
+    this.matchEl.style.display = 'none';
+    this.hud.root.appendChild(this.matchEl);
     window.addEventListener('resize', () => this.onResize());
     window.addEventListener('keydown', (e) => { if (e.code === 'Escape' && this.state === 'hangar') this.closeHangar(); });
     document.addEventListener('visibilitychange', () => { if (document.hidden) this.pause(); });
@@ -203,7 +219,7 @@ export class Game {
   /** The part of the settings that needs the world or the aircraft rebuilt when it changes. */
   private sortieSig(): string {
     const s = this.settings.value;
-    return [s.mapId, s.sortie, s.blueAI, s.redAI, s.aiSkill].join('|');
+    return [s.mapId, s.sortie, s.teamSize, s.aiSkill, s.scoreLimit, s.timeLimit].join('|');
   }
 
   /** Take the sortie apart: every aircraft, the training range and the combat layer (before the world goes away). */
@@ -241,11 +257,14 @@ export class Game {
     this.combat.events.on((e) => this.onCombatEvent(e));
     this.range = new TrainingRange(this.combat, this.world.scene, this.smoke);
     this.skirmish = null;
+    this.match = null;
     this.setAircraft(s.aircraftId, true);
+    this.fighter.stats = { kills: 0, assists: 0, deaths: 0, shots: 0, hits: 0, damage: 0 };
     if (s.sortie === 'training') this.range.build(s.drones === 'hostile', this.world.map);
-    else {
+    else if (s.sortie === 'tdm') {
       this.skirmish = new Skirmish(this.combat, this.world.scene, this.smoke, this.world.map, s.aiSkill);
-      this.skirmish.build(s.blueAI, s.redAI);
+      this.skirmish.build(s.teamSize - 1, s.teamSize);
+      this.match = new Match({ scoreLimit: s.scoreLimit, timeLimit: s.timeLimit * 60, teamSize: s.teamSize });
     }
     this.feed = [];
     this.numbers = [];
@@ -282,7 +301,7 @@ export class Game {
   }
 
   private applyAllSettings(): void {
-    for (const k of ['fov', 'difficulty', 'cameraShake', 'hudPitchLadder', 'speedUnit', 'showFps', 'masterVolume', 'drones'] as (keyof Settings)[]) this.applySetting(k, true);
+    for (const k of ['fov', 'difficulty', 'cameraShake', 'hudPitchLadder', 'speedUnit', 'showFps', 'masterVolume', 'musicVolume', 'drones'] as (keyof Settings)[]) this.applySetting(k, true);
   }
 
   private applySetting(key: keyof Settings, silent = false): void {
@@ -302,6 +321,7 @@ export class Game {
       case 'cameraShake': this.rig.shakeEnabled = s.cameraShake; break;
       case 'showFps': this.fpsEl.style.display = s.showFps ? '' : 'none'; break;
       case 'masterVolume': this.audio.setVolume(s.masterVolume); break;
+      case 'musicVolume': this.audio.setMusicVolume(s.musicVolume); break;
       case 'drones': this.range?.setHostile(s.drones === 'hostile'); break;
       default: break;
     }
@@ -340,6 +360,7 @@ export class Game {
 
   private async startFlying(): Promise<void> {
     this.audio.unlock(); // must happen inside the click's call stack
+    if (this.match?.over) this.builtSig = ''; // a finished match is never resumed
     if (this.sortieSig() !== this.builtSig) {
       await this.rebuild(); // the pointer-lock gesture would have expired: ask for another click
       return;
@@ -562,10 +583,11 @@ export class Game {
       this.updateCrash(dt);
       this.updateFeedback(dt);
       this.governResolution(dt);
-    } else if (this.state === 'paused') {
+    } else if (this.state === 'paused' || this.state === 'results') {
       // keep the Esc key responsive when pointer lock isn't available
       this.input.endFrame();
     }
+    if (this.state !== 'loading') this.updateMusic(dt);
 
     if (this.state === 'hangar') this.renderHangar(dt);
     else if (this.state !== 'loading') this.renderFrame(this.state === 'playing' ? dt : 0);
@@ -720,6 +742,10 @@ export class Game {
     this.combat.update(dt);
     this.range.update();
     this.skirmish?.update();
+    if (this.match) {
+      if (!this.match.over) this.match.update(dt);
+      if (this.match.over && this.state !== 'results') this.endMatch();
+    }
   }
 
   private terrainAssist(dt: number): void {
@@ -876,6 +902,7 @@ export class Game {
         const mine = !!e.killer && e.killer.id === me.id;
         const theirs = e.victim === me;
         const who = e.killer ? e.killer.name : 'Crash';
+        if (this.match && 'damage' in e.victim) this.match.onKill(e.killer ? e.killer.team : null, e.victim.team);
         this.feed.unshift({ text: `${who}  ▸  ${e.victim.name}  [${e.weapon}]`, age: 0, mine, theirs });
         if (this.feed.length > 5) this.feed.pop();
         if (mine) {
@@ -905,11 +932,93 @@ export class Game {
     }
   }
 
+  // ---- matches, scoreboard, music ---------------------------------------------------------------
+
+  private scoreData(): ScoreData {
+    const m = this.match;
+    const s = this.settings.value;
+    const fighters = this.combat.fighters;
+    const sum = (team: 'blue' | 'red') => fighters.filter((f) => f.team === team).reduce((n, f) => n + f.stats.kills, 0);
+    return {
+      title: s.sortie === 'training' ? 'TRAINING RANGE' : s.sortie === 'freeflight' ? 'FREE FLIGHT' : 'TEAM DEATHMATCH',
+      score: m ? m.score : { blue: sum('blue'), red: sum('red') },
+      info: m ? `FIRST TO ${m.cfg.scoreLimit}${m.remaining !== null ? '   ·   ' + formatClock(m.remaining) : ''}` : '',
+      rows: fighters.map((f) => ({
+        name: f.isPlayer ? 'You' : f.name,
+        aircraft: f.aircraft.def.name,
+        team: f.team,
+        kills: f.stats.kills,
+        assists: f.stats.assists,
+        deaths: f.stats.deaths,
+        accuracy: f.stats.shots > 0 ? f.stats.hits / f.stats.shots : null,
+        you: f === this.fighter,
+        alive: f.state === 'alive',
+      })),
+    };
+  }
+
+  /** The match is decided: stop the sim and show the results. */
+  private endMatch(): void {
+    const m = this.match!;
+    this.state = 'results';
+    this.input.captureKeys = false;
+    this.input.exitLock();
+    document.body.classList.remove('playing');
+    this.audio.setPaused(true);
+    this.audio.lockTone('off', 0);
+    this.scoreboard.hide();
+    this.menus.hideCrash();
+    this.hud.setVisible(false);
+    const outcome = m.winner === 'draw' ? 'draw' : m.winner === 'blue' ? 'win' : 'loss';
+    this.menus.showResults({ outcome, reason: `${m.reason}  ·  ${m.score.blue} to ${m.score.red}`, data: this.scoreData() });
+  }
+
+  /** Top-of-screen score line for team deathmatch. */
+  private updateMatchHud(): void {
+    const m = this.match;
+    if (!m || this.state === 'results') {
+      if (this.matchEl.style.display !== 'none') this.matchEl.style.display = 'none';
+      return;
+    }
+    const rem = m.remaining;
+    const text = `${m.score.blue}|${rem === null ? 'x' : formatClock(rem)}|${m.score.red}`;
+    this.matchEl.style.display = '';
+    if (text === this.matchText) return;
+    this.matchText = text;
+    this.matchEl.innerHTML = `<span class="b">${m.score.blue}</span><span class="t">${rem === null ? '∞' : formatClock(rem)}</span><span class="r">${m.score.red}</span><span class="lim">FIRST TO ${m.cfg.scoreLimit}</span>`;
+  }
+
+  /** Menu music in the menus; in flight, a score that heats up when enemies are close or something is shooting at you. */
+  private updateMusic(dt: number): void {
+    const m = this.music;
+    const playing = this.state === 'playing';
+    m.setTheme(playing ? 'flight' : 'menu');
+    let I = 0.3;
+    if (playing) {
+      const fg = this.fighter;
+      I = fg.state === 'alive' ? 0.25 : 0.12;
+      if (fg.state === 'alive') {
+        let near = 1e9;
+        for (const o of this.combat.fighters) if (o.team !== fg.team && o.alive) near = Math.min(near, o.pos.distanceTo(fg.pos));
+        if (near < 14000) I += (1 - near / 14000) * 0.35;
+        if (this.combat.threats(fg).length) I += 0.3;
+        else if (this.combat.radarLocks(fg).length) I += 0.12;
+        if (fg.damage.health() < 0.5) I += 0.1;
+        if (this.hurtK > 0.2) I += 0.1;
+      }
+    }
+    m.setIntensity(I);
+    m.update(dt);
+  }
+
   /** Fade the hit markers, age the kill feed and floating numbers. */
   private updateFeedback(dt: number): void {
     this.hitK = Math.max(0, this.hitK - dt * 4);
     this.killK = Math.max(0, this.killK - dt * 1.4);
     this.hurtK = Math.max(0, this.hurtK - dt * 0.9);
+    this.updateMatchHud();
+    if (this.input.isDown('scoreboard')) this.scoreboard.show(this.scoreData());
+    else this.scoreboard.hide();
     for (const f of this.feed) f.age += dt;
     while (this.feed.length && this.feed[this.feed.length - 1].age > 8) this.feed.pop();
     for (const n of this.numbers) n.age += dt;

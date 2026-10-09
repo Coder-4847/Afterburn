@@ -4,7 +4,7 @@ export type Action =
   | 'pitchUp' | 'pitchDown' | 'rollLeft' | 'rollRight' | 'yawLeft' | 'yawRight'
   | 'throttleUp' | 'throttleDown' | 'afterburner' | 'airbrake'
   | 'fireGun' | 'fireMissile' | 'cycleTarget' | 'lockTarget' | 'flares' | 'chaff'
-  | 'weapon1' | 'weapon2' | 'weapon3' | 'weapon4' | 'targetCam'
+  | 'weapon1' | 'weapon2' | 'weapon3' | 'weapon4' | 'targetCam' | 'scoreboard'
   | 'gear' | 'camera' | 'map' | 'lookAround' | 'pause' | 'toggleFps';
 
 /** Key codes are KeyboardEvent.code values; mouse buttons are 'Mouse0' (LMB), 'Mouse1' (MMB), 'Mouse2' (RMB). */
@@ -30,6 +30,7 @@ export const DEFAULT_BINDINGS: Record<Action, string[]> = {
   weapon3: ['Digit3'],
   weapon4: ['Digit4'],
   targetCam: ['KeyX'],
+  scoreboard: ['KeyP'],
   gear: ['KeyG'],
   camera: ['KeyV'],
   map: ['KeyM'],
@@ -44,7 +45,7 @@ export const ACTION_LABELS: Record<Action, string> = {
   throttleUp: 'Throttle up', throttleDown: 'Throttle down', afterburner: 'Afterburner (hold)', airbrake: 'Airbrake / wheel brakes',
   fireGun: 'Fire gun', fireMissile: 'Fire missile', cycleTarget: 'Cycle target', lockTarget: 'Lock at reticle',
   flares: 'Flares', chaff: 'Chaff',
-  weapon1: 'Weapon 1', weapon2: 'Weapon 2', weapon3: 'Weapon 3', weapon4: 'Weapon 4', targetCam: 'Target view (hold)',
+  weapon1: 'Weapon 1', weapon2: 'Weapon 2', weapon3: 'Weapon 3', weapon4: 'Weapon 4', targetCam: 'Target view (hold)', scoreboard: 'Scoreboard (hold)',
   gear: 'Landing gear', camera: 'Change camera', map: 'Map', lookAround: 'Look around (hold)',
   pause: 'Pause', toggleFps: 'Show FPS',
 };
