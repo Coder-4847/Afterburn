@@ -1,0 +1,80 @@
+import type { MapDef } from './types';
+
+/**
+ * Frostline Alps: a mountain island of snowy ridges, glacial valleys and frozen lakes, falling away to icy water.
+ * Blue holds the western valleys, Red the eastern; a big frozen lake and the high passes lie between. X is east, Z is south.
+ */
+export const FROSTLINE: MapDef = {
+  id: 'frostline',
+  name: 'Frostline Alps',
+  tagline: 'Alpine · snow · valleys',
+  description: 'Jagged snow-capped ridges and narrow glacial valleys. Plenty of cover for terrain-hugging attacks; fly high and you see everything.',
+  size: 20480,
+  seed: 31415,
+  seaLevel: 0,
+  terrain: {
+    kind: 'alpine',
+    peak: 2700,
+    basins: [
+      { x: -6700, z: 300, rx: 2700, rz: 1500, rot: 5, floor: 55 },
+      { x: -4200, z: -5200, rx: 1900, rz: 1250, rot: 30, floor: 70 },
+      { x: -4500, z: 5200, rx: 1900, rz: 1300, rot: -20, floor: 60 },
+      { x: 6700, z: -300, rx: 2700, rz: 1500, rot: 5, floor: 55 },
+      { x: 4500, z: 5200, rx: 1900, rz: 1250, rot: -30, floor: 60 },
+      { x: 4200, z: -5200, rx: 1900, rz: 1300, rot: 20, floor: 70 },
+      { x: 0, z: 0, rx: 2700, rz: 1900, rot: 40, floor: -32, lake: true },
+      { x: -300, z: -2800, rx: 1100, rz: 800, rot: 10, floor: -18, lake: true },
+    ],
+  },
+  palette: {
+    base: 0x56684a,
+    sand: 0x9a9c86,
+    rock: 0x72757a,
+    snow: 0xf5f8fb,
+    seabed: 0x93aab6,
+    sandTop: 4,
+    snowLine: 1250,
+    rockSlope: 0.26,
+    detailStrength: 0.6,
+  },
+  water: { shallow: 0x9fd6e6, deep: 0x15496b, clarity: 30, waveStrength: 0.35 },
+  lighting: {
+    day: {
+      sunAzimuth: 150,
+      sunElevation: 36,
+      sunColor: 0xfff3e0,
+      sunIntensity: 3.6,
+      zenith: 0x2763ad,
+      horizon: 0xbcd6ec,
+      ground: 0x8398ad,
+      sunsetTint: 0xe6e2da,
+      fogDensity: 0.00008,
+      envIntensity: 0.85,
+      exposure: 1.0,
+    },
+    sunset: {
+      sunAzimuth: 250,
+      sunElevation: 6,
+      sunColor: 0xffb27a,
+      sunIntensity: 2.4,
+      zenith: 0x24366f,
+      horizon: 0xf1a98c,
+      ground: 0x57536b,
+      sunsetTint: 0xff8e5a,
+      fogDensity: 0.0001,
+      envIntensity: 0.62,
+      exposure: 1.1,
+    },
+  },
+  airstrips: [
+    { id: 'blue-alpha', team: 'blue', name: 'Blue Alpha', x: -6900, z: 300, heading: 90, length: 1600, width: 48, elevation: 55 },
+    { id: 'blue-bravo', team: 'blue', name: 'Blue Bravo', x: -4200, z: -5200, heading: 60, length: 1400, width: 46, elevation: 70 },
+    { id: 'blue-charlie', team: 'blue', name: 'Blue Charlie', x: -4500, z: 5200, heading: 110, length: 1400, width: 46, elevation: 60 },
+    { id: 'red-alpha', team: 'red', name: 'Red Alpha', x: 6900, z: -300, heading: 270, length: 1600, width: 48, elevation: 55 },
+    { id: 'red-bravo', team: 'red', name: 'Red Bravo', x: 4500, z: 5200, heading: 250, length: 1400, width: 46, elevation: 60 },
+    { id: 'red-charlie', team: 'red', name: 'Red Charlie', x: 4200, z: -5200, heading: 300, length: 1400, width: 46, elevation: 70 },
+  ],
+  clouds: { base: 3300, top: 4200, coverage: 0.38, scale: 1.4 },
+  boundary: 9600,
+  spawn: { x: -5200, z: 300, heading: 90, altitude: 1700, speed: 210 },
+};

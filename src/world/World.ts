@@ -1,5 +1,5 @@
 import {
-  DirectionalLight, FogExp2, Mesh, PCFShadowMap, PMREMGenerator, PerspectiveCamera, Scene, SphereGeometry,
+  DirectionalLight, FogExp2, Mesh, MeshStandardMaterial, PCFShadowMap, PlaneGeometry, PMREMGenerator, PerspectiveCamera, Scene, SphereGeometry,
   Vector3, type Texture, type WebGLRenderer, type WebGLRenderTarget,
 } from 'three';
 import type { MapDef } from '../data/maps/types';
@@ -41,6 +41,8 @@ export class World implements FlightEnv {
   fogToneMapped = true;
   /** Extra fog density from being inside a cloud. */
   private cloudFog = 0;
+  /** Flat ground that fills the world beyond the terrain on maps with no sea. */
+  private ground: Mesh | null = null;
 
   private constructor(
     readonly map: MapDef,
@@ -55,6 +57,17 @@ export class World implements FlightEnv {
     const scene = this.scene;
     scene.fog = this.fog;
     scene.add(terrain.group, water.mesh, sky.mesh);
+    if (map.groundPlane) {
+      water.mesh.visible = false;
+      const g = new Mesh(
+        new PlaneGeometry(140000, 140000, 1, 1).rotateX(-Math.PI / 2),
+        new MeshStandardMaterial({ color: map.groundPlane.color, roughness: 1, metalness: 0 }),
+      );
+      g.position.y = map.groundPlane.y - 0.35;
+      g.frustumCulled = false;
+      this.ground = g;
+      scene.add(g);
+    }
     for (const a of map.airstrips) {
       const s = new Airstrip(a);
       this.airstrips.push(s);
@@ -196,6 +209,10 @@ export class World implements FlightEnv {
     const cp = camera.position;
     this.sky.mesh.position.copy(cp);
     this.water.update(dt, cp.x, cp.z);
+    if (this.ground) {
+      this.ground.position.x = Math.round(cp.x / 200) * 200;
+      this.ground.position.z = Math.round(cp.z / 200) * 200;
+    }
     this.terrain.update(cp);
 
     // fog follows the sky in the direction we're looking
@@ -228,7 +245,20 @@ export class World implements FlightEnv {
     this.sun.target.updateMatrixWorld();
   }
 
+  /** Free everything on the GPU (used when switching maps). */
   dispose(): void {
+    this.scene.traverse((o) => {
+      const m = o as Mesh;
+      m.geometry?.dispose();
+      const mats = m.material ? (Array.isArray(m.material) ? m.material : [m.material]) : [];
+      for (const mat of mats) {
+        for (const v of Object.values(mat)) if (v && (v as { isTexture?: boolean }).isTexture) (v as Texture).dispose();
+        const u = (mat as { uniforms?: Record<string, { value: unknown }> }).uniforms;
+        if (u) for (const k of Object.keys(u)) if ((u[k].value as { isTexture?: boolean } | null)?.isTexture) (u[k].value as Texture).dispose();
+        mat.dispose();
+      }
+    });
+    this.sun.shadow.map?.dispose();
     this.envTarget?.dispose();
     this.pmrem.dispose();
   }

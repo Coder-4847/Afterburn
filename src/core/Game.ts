@@ -1,5 +1,6 @@
 import { Vector3 } from 'three';
 import { TrainingRange } from '../ai/Range';
+import { Skirmish } from '../ai/Skirmish';
 import { Aircraft } from '../aircraft/Aircraft';
 import { GameAudio } from '../audio/Audio';
 import { cameraFor } from '../aircraft/AircraftDef';
@@ -22,6 +23,7 @@ import { Fighter } from '../weapons/Fighter';
 import { GROUPS, GROUP_LABEL } from '../weapons/WeaponSystem';
 import type { CombatEvent } from '../weapons/types';
 import type { CombatHud } from '../ui/CombatHud';
+import type { Contact, MinimapData } from '../ui/Minimap';
 import { Hud, type HudData } from '../ui/Hud';
 import { HangarUI } from '../ui/Hangar';
 import { Menus } from '../ui/Menus';
@@ -69,6 +71,9 @@ export class Game {
   private combat!: Combat;
   private fighter!: Fighter;
   private range!: TrainingRange;
+  private skirmish: Skirmish | null = null;
+  private mapId = '';
+  private builtSig = '';
   private quality!: QualityPreset;
   private detected: QualityLevel = 'medium';
 
@@ -140,6 +145,7 @@ export class Game {
       respawnAir: () => { this.spawnAir(); void this.resume(); },
       respawnRunway: () => { this.spawnRunway(); void this.resume(); },
       hangar: () => this.openHangar(),
+      setup: () => { this.state = 'ready'; this.menus.showReady(); },
       aircraftName: () => getAircraft(this.settings.value.aircraftId).fullName,
       changed: (k) => this.applySetting(k),
     });
@@ -170,20 +176,8 @@ export class Game {
     // give the loading panel a moment to paint (a timer, not rAF: rAF never fires in background tabs)
     await yieldToMain();
 
-    const map = MAPS.coral;
-    this.world = await World.create(map, this.renderer.gl, this.quality, this.settings.value.timeOfDay, progress);
-
-    this.smoke = new ParticleSystem(9000, false, true);
-    this.fire = new ParticleSystem(3500, true, false);
-    this.world.scene.add(this.smoke.points, this.fire.points);
-    this.trails = new TrailEmitter(this.smoke);
-    this.world.fogToneMapped = !this.renderer.postActive;
-    this.combat = new Combat(this.world.scene, this.world, this.smoke, this.fire);
-    this.combat.audio = this.audio;
-    this.combat.events.on((e) => this.onCombatEvent(e));
-    this.range = new TrainingRange(this.combat, this.world.scene, this.smoke);
-    this.setAircraft(this.settings.value.aircraftId);
-    this.range.build(this.settings.value.drones === 'hostile');
+    await this.loadWorld(this.settings.value.mapId, progress);
+    this.buildSortie();
     this.applyAllSettings();
 
     this.hangar = new HangarScene(this.renderer.gl);
@@ -194,7 +188,6 @@ export class Game {
     });
     this.hangarUi.onPreview = (def) => this.hangar.setAircraft(def, TEAM_BLUE);
     this.hangar.resize(window.innerWidth / window.innerHeight);
-    this.world.terrain.prewarm(this.rig.camera.position);
     // two warm-up frames so shaders compile before the menu appears
     this.renderFrame(0);
     this.renderFrame(0);
@@ -203,6 +196,84 @@ export class Game {
     this.menus.showReady();
     this.lastTime = performance.now();
     requestAnimationFrame(this.loop);
+  }
+
+  // ---- maps and sorties ---------------------------------------------------------------------
+
+  /** The part of the settings that needs the world or the aircraft rebuilt when it changes. */
+  private sortieSig(): string {
+    const s = this.settings.value;
+    return [s.mapId, s.sortie, s.blueAI, s.redAI, s.aiSkill].join('|');
+  }
+
+  /** Take the sortie apart: every aircraft, the training range and the combat layer (before the world goes away). */
+  private teardownSortie(): void {
+    if (!this.combat) return;
+    this.range?.clear();
+    this.skirmish?.clear();
+    this.skirmish = null;
+    for (const f of [...this.combat.fighters]) f.aircraft.dispose();
+    this.player?.dispose();
+    this.combat.dispose();
+  }
+
+  private async loadWorld(mapId: string, progress: (p: number, label: string) => void): Promise<void> {
+    const map = MAPS[mapId] ?? MAPS.coral;
+    const old = this.world;
+    this.teardownSortie();
+    this.world = await World.create(map, this.renderer.gl, this.quality, this.settings.value.timeOfDay, progress);
+    old?.dispose();
+    this.smoke = new ParticleSystem(9000, false, true);
+    this.fire = new ParticleSystem(3500, true, false);
+    this.world.scene.add(this.smoke.points, this.fire.points);
+    this.trails = new TrailEmitter(this.smoke);
+    this.world.fogToneMapped = !this.renderer.postActive;
+    this.mapId = map.id;
+    this.builtSig = '';
+    this.hud.minimap.setMap(map, this.world.heightmap);
+  }
+
+  /** Create the combat layer, the player's aircraft and whatever the sortie puts in the air (training range or AI teams). */
+  private buildSortie(): void {
+    const s = this.settings.value;
+    this.combat = new Combat(this.world.scene, this.world, this.smoke, this.fire);
+    this.combat.audio = this.audio;
+    this.combat.events.on((e) => this.onCombatEvent(e));
+    this.range = new TrainingRange(this.combat, this.world.scene, this.smoke);
+    this.skirmish = null;
+    this.setAircraft(s.aircraftId, true);
+    if (s.sortie === 'training') this.range.build(s.drones === 'hostile', this.world.map);
+    else {
+      this.skirmish = new Skirmish(this.combat, this.world.scene, this.smoke, this.world.map, s.aiSkill);
+      this.skirmish.build(s.blueAI, s.redAI);
+    }
+    this.feed = [];
+    this.numbers = [];
+    this.builtSig = this.sortieSig();
+    this.applySetting('difficulty', true);
+    this.world.terrain.prewarm(this.rig.camera.position);
+  }
+
+  /** Apply a changed map / sortie setup: shows the loading panel, then returns to the ready screen. */
+  private async rebuild(): Promise<void> {
+    this.state = 'loading';
+    this.input.captureKeys = false;
+    this.hud.setVisible(false);
+    const progress = this.menus.showLoading();
+    await yieldToMain();
+    if (this.settings.value.mapId !== this.mapId) await this.loadWorld(this.settings.value.mapId, progress);
+    else {
+      progress(0.4, 'Deploying aircraft');
+      await yieldToMain();
+      this.teardownSortie();
+    }
+    this.buildSortie();
+    this.renderFrame(0);
+    this.renderFrame(0);
+    progress(1, 'Ready');
+    this.state = 'ready';
+    this.menus.showReady();
+    this.menus.flashPrimary('READY  -  CLICK TO FLY');
   }
 
   private resolveQuality(): QualityPreset {
@@ -269,6 +340,10 @@ export class Game {
 
   private async startFlying(): Promise<void> {
     this.audio.unlock(); // must happen inside the click's call stack
+    if (this.sortieSig() !== this.builtSig) {
+      await this.rebuild(); // the pointer-lock gesture would have expired: ask for another click
+      return;
+    }
     if (await this.acquireLock()) this.enterPlay();
   }
 
@@ -305,9 +380,9 @@ export class Game {
   // ---- aircraft selection / hangar ------------------------------------------------------------
 
   /** Swap the player's aircraft (new flight model + model) and respawn in the air. */
-  private setAircraft(id: string): void {
+  private setAircraft(id: string, force = false): void {
     const def = getAircraft(id);
-    if (this.player && this.player.def.id === def.id) return;
+    if (!force && this.player && this.player.def.id === def.id) return;
     const old = this.player;
     const p = new Aircraft(def, DIFFICULTIES[this.settings.value.difficulty], TEAM_BLUE);
     this.player = p;
@@ -493,7 +568,7 @@ export class Game {
     }
 
     if (this.state === 'hangar') this.renderHangar(dt);
-    else this.renderFrame(this.state === 'playing' ? dt : 0);
+    else if (this.state !== 'loading') this.renderFrame(this.state === 'playing' ? dt : 0);
     this.input.endFrame();
     this.updateFps(dt);
   };
@@ -505,6 +580,7 @@ export class Game {
     if (this.state === 'playing') this.rig.update(dt, this.rigTarget(), this.groundAt);
     this.combat.render(this.alpha);
     this.range.render(this.alpha, dt, this.quality.trails);
+    this.skirmish?.render(this.alpha, dt, this.quality.trails);
     if (this.state === 'playing') this.updateAudio(dt);
     this.world.update(dt, this.rig.camera, p.object.position);
     // particles: contrails / vortices follow the aircraft, then everything integrates and is sized for this view
@@ -566,6 +642,7 @@ export class Game {
 
     if (inp.pressed('pause')) { this.pause(); return; }
     if (inp.pressed('toggleFps')) this.settings.set('showFps', !s.showFps), this.applySetting('showFps');
+    if (inp.pressed('map')) this.hud.minimap.toggleOpen();
     if (inp.pressed('camera')) {
       this.rig.cycleMode();
       this.say(this.rig.mode === 'chase' ? 'CHASE VIEW' : 'COCKPIT VIEW', 1.4);
@@ -642,6 +719,7 @@ export class Game {
 
     this.combat.update(dt);
     this.range.update();
+    this.skirmish?.update();
   }
 
   private terrainAssist(dt: number): void {
@@ -756,10 +834,15 @@ export class Game {
     const f = this.player.flight;
     const fg = this.fighter;
     this.serviceTimer = f.grounded && f.speed < 6 ? this.serviceTimer + dt : 0;
-    if (this.serviceTimer < 3 || !fg.needsService()) return;
+    if (this.serviceTimer < 0.2 || !fg.needsService()) return;
     const near = this.world.nearestAirstrip(f.pos.x, f.pos.z);
     const apron = this.world.surfaceAt(f.pos.x, f.pos.z, _surf).onApron;
     if (near.def.team !== 'blue' || !apron) return;
+    if (this.serviceTimer < 3) {
+      const n = Math.floor(this.serviceTimer);
+      this.say(`SERVICING  ${'■'.repeat(n)}${'□'.repeat(3 - n)}`, 0.4);
+      return;
+    }
     fg.service();
     this.say('REARMED  ·  REFUELED  ·  REPAIRED', 3);
   }
@@ -875,6 +958,26 @@ export class Game {
       x = nx; y = ny; z = nz;
     }
     return false;
+  }
+
+  private contacts: Contact[] = [];
+
+  /** Positions of every aircraft, target and missile for the minimap (enemy visibility is applied by the minimap). */
+  private minimapData(): MinimapData | null {
+    const fg = this.fighter;
+    const f = this.player.flight;
+    this.hud.minimap.enabled = this.settings.value.minimap;
+    const list = this.contacts;
+    list.length = 0;
+    const sel = fg.weapons.target;
+    for (const o of this.combat.fighters) {
+      if (o === fg || !o.alive) continue;
+      list.push({ x: o.pos.x, z: o.pos.z, team: o.team, kind: 'air', heading: o.aircraft.flight.heading(), selected: o === sel });
+    }
+    for (const d of this.combat.dummies) if (d.alive) list.push({ x: d.pos.x, z: d.pos.z, team: d.team, kind: 'air', heading: 0, selected: d === sel });
+    for (const t of this.combat.ground) if (t.alive) list.push({ x: t.pos.x, z: t.pos.z, team: t.team, kind: 'ground', heading: 0, selected: t === sel });
+    for (const th of this.combat.threats(fg)) list.push({ x: th.missile.pos.x, z: th.missile.pos.z, team: 'red', kind: 'missile', heading: 0, selected: false });
+    return { x: f.pos.x, z: f.pos.z, heading: f.heading(), contacts: list };
   }
 
   /** Gather the weapon / target / damage state for the combat HUD. */
@@ -1010,6 +1113,7 @@ export class Game {
       veil: this.world.cloudInside,
       speedFx: this.quality.screenFx && this.state === 'playing' ? smoothstep(0.5, 1, f.speed / p.def.flight.maxSpeed) * 0.55 + f.abLevel * 0.3 : 0,
       combat: this.combatHud(),
+      minimap: this.minimapData(),
     };
     this.hud.update(d, this.rig.camera, dt);
   }
@@ -1072,7 +1176,7 @@ export class Game {
     const fwd = new Vector3();
     return {
       player: this.player, world: this.world, rig: this.rig, input: this.input, aim: this.aim,
-      combat: this.combat, fighter: this.fighter, range: this.range, audio: this.audio,
+      combat: this.combat, fighter: this.fighter, range: this.range, skirmish: this.skirmish, audio: this.audio,
       /** Open the hangar on an aircraft with a fixed camera (for screenshots). */
       hangarView: async (id: string, yaw = 0.9, pitch = 0.25, ab = false, gear = true, panels = false, wait = 1300) => {
         if (this.state !== 'hangar') this.openHangar();

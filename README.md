@@ -5,10 +5,10 @@ module damage model, and a forgiving, fun feel. It is a fully static web app: no
 asset downloads. Terrain, aircraft, textures and audio are all generated in code, so the repository is
 self-contained and deploys straight to GitHub Pages.
 
-> **Status: Phase 3 of 6 (weapons and damage).** 14 aircraft, a hangar with a loadout screen, cannon, IR and radar missiles,
-> rockets, bombs, flares and chaff, a module damage model, procedural audio and a training range (target balloons, ground
-> targets, three Red drones) on one map (Coral Archipelago). Real AI opponents, the other maps and the game modes arrive in
-> later phases.
+> **Status: Phase 4 of 6 (AI, maps, minimap).** Three maps (Coral Archipelago, Sandstorm Basin, Frostline Alps), AI
+> pilots with three skill levels, a skirmish sortie (you and AI wingmen against AI opponents), airstrip rearm and repair, and a
+> minimap with a full-screen map. Plus everything from Phase 3: 14 aircraft, loadouts, cannon, missiles, rockets, bombs,
+> countermeasures, module damage, procedural audio and a training range. The proper game modes and menus arrive in Phase 5.
 
 ## Run it
 
@@ -41,6 +41,7 @@ Mouse-aim is the default scheme: the mouse moves a reticle, and the aircraft ban
 | **Y** | Lock the target nearest the nose |
 | **F / C** | Flares / chaff |
 | **X** (hold) | Target view: the camera swings round to keep the target in sight |
+| **M** | Full-screen map (north-up) |
 | **V** | Camera: chase / cockpit |
 | **Z** or **middle mouse** (hold) | Look around |
 | **F3** | FPS / render stats |
@@ -96,6 +97,42 @@ scale (it is resized to the aircraft's length and centred). Optional node names 
 `elevator_l` / `elevator_r`, `rudder`, and anything starting with `gear` is hidden when the gear is up. The afterburner is attached
 automatically.
 
+## Maps
+
+Pick one on the start screen (**Sortie > Map**); the world reloads when you press the start button. Each map has three Blue and three
+Red airstrips, its own lighting (day and sunset), and a spawn point for the player.
+
+| Map | Look | Flying |
+|---|---|---|
+| **Coral Archipelago** | Bright tropical islands over shallow turquoise water, a rugged volcano in the middle | Wide open sky, low-level island hopping |
+| **Sandstorm Basin** | A dune basin ringed by flat-topped mesas and broken highlands under dusty haze (no sea: a flat desert fills the world) | Visibility is short; canyons and mesas hide low-flying jets |
+| **Frostline Alps** | Snow-capped ridges up to 2,700 m, glacial valleys and frozen lakes, falling to icy sea at the edge | Valley airstrips and high passes: terrain-hugging attacks, or fly above the peaks |
+
+Terrain is generated per map from a seed (`src/world/generators`: `archipelago`, `desert`, `alpine`), so a map is just a data file in
+`src/data/maps/` plus a generator kind. Adding a map: copy one of the map files, change the numbers (and the generator settings in
+`terrain`), and add it to `src/data/maps/index.ts`.
+
+## Sorties, AI pilots and the minimap
+
+**Sortie modes** (start screen):
+
+- **Training range**: target balloons dead ahead, a ground-target site and three Red drones that evade (or, set to *Hostile*, hunt you).
+- **Skirmish**: you and 0 to 6 AI wingmen (Blue) against 1 to 8 AI opponents (Red). Everyone respawns near their own airstrips a few
+  seconds after dying, so the fight carries on. (Phase 5 turns this into the real modes: team sizes up to 10v10, scoring, timers.)
+
+**AI pilots** (`src/ai/Pilot.ts`) fly the same mouse-aim control law you do. They patrol, close to missile range and fire radar missiles
+(then turn 40 degrees off to keep the datalink), merge and dogfight with guns and IR missiles, break when someone is on their tail,
+beam the missile and use flares or chaff when one is inbound, avoid mountains by looking ahead, and return to an airstrip to rearm when
+hurt, low on fuel or out of weapons. Skill (**Rookie / Regular / Ace**) sets reaction time, aim error, gun and missile range, how often
+they fire and how well they use countermeasures. They share targets so a team spreads out instead of piling onto one jet.
+
+**Rearm and repair:** stop on a friendly (Blue) runway or apron for three seconds with the gear down to be repaired, refuelled and rearmed.
+AI pilots do this on a low pass over their own strip.
+
+**Minimap:** a heading-up radar in the top-left shows terrain, airstrips and aircraft (enemies only inside a 16 km detection radius;
+your selected target is circled; inbound missiles flash). **M** opens the whole map, north-up. The minimap can be switched off in
+Settings > HUD.
+
 ## Weapons and damage
 
 **Weapons.** Each aircraft has real stations (wingtips, wing pylons, fuselage, internal bays on the stealth jets) built from its model,
@@ -145,6 +182,7 @@ Everything lives in config files, no code changes needed.
 | Stations, presets, payload limits per aircraft | `src/data/stations.ts` |
 | Hit points per module, fire and leak behaviour | `src/damage/DamageModel.ts` (aircraft `hp` in `src/data/aircraft/*.ts`) |
 | Training range layout and drones | `src/ai/Range.ts`, `src/ai/Drone.ts` |
+| AI skill levels and behaviour | `src/ai/Pilot.ts` (`SKILLS`) |
 
 Quick guide for the most common tweaks:
 
@@ -171,11 +209,11 @@ src/
   aircraft/  aircraft schema, procedural jet builder (+ materials, afterburner, trails), .glb override loader, aircraft entity
   world/     terrain (chunked LOD), sky, water, clouds, airstrips, noise, heightmap
   render/    renderer + post-processing chain, camera rig, quality presets, particle system, hangar scene
-  ui/        HUD (canvas + DOM), menus, styles
+  ui/        HUD (canvas + DOM), combat HUD, minimap, menus, styles
   data/      aircraft, maps, difficulty, tuning (all data-driven)
   weapons/   combat manager (projectiles, missiles, decoys, explosions), fighter, weapon system, loadouts, targets
   damage/    module damage model
-  ai/        training-range drones and range layout
+  ai/        pilots (skirmish AI), training-range drones, range layout, skirmish manager
   audio/     procedural WebAudio
   modes/     reserved for later phases
 ```
@@ -204,7 +242,7 @@ Nothing is deployed until you push.
 
 1. Foundation, flight, world (done)
 2. Aircraft roster (14 jets), animated surfaces, post-processing, clouds, hangar (done)
-3. **Weapons, countermeasures, module damage model, loadouts, training targets, audio** (this phase)
-4. AI pilots, all three maps, airstrip rearm/repair, minimap
+3. Weapons, countermeasures, module damage model, loadouts, training targets, audio (done)
+4. **AI pilots, all three maps, airstrip rearm/repair, minimap** (this phase)
 5. Game modes (1v1 to 10v10, Training), menus, scoreboards, rebinding, music
 6. Optimisation, balance, bug sweep, accessibility, release prep

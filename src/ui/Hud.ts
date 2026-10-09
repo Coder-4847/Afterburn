@@ -2,6 +2,7 @@ import { PerspectiveCamera, Vector3 } from 'three';
 import type { SpeedUnit } from '../core/Settings';
 import { DEG, RAD, clamp, smoothstep } from '../core/math';
 import { CombatHudLayer, type CombatHud } from './CombatHud';
+import { Minimap, type MinimapData } from './Minimap';
 
 export interface HudData {
   speed: number; // m/s
@@ -37,6 +38,7 @@ export interface HudData {
   speedFx: number;
   /** Weapons, targeting and damage state (null = nothing to show, e.g. while dead). */
   combat: CombatHud | null;
+  minimap: MinimapData | null;
 }
 
 export interface HudOptions {
@@ -89,6 +91,7 @@ export class Hud {
   private veil: HTMLElement;
   private canopy: HTMLElement;
   private combat: CombatHudLayer;
+  readonly minimap: Minimap;
   private cache = new Map<HTMLElement, string>();
   options: HudOptions = { unit: 'kmh', ladder: true, tape: true, flightPath: true };
   private time = 0;
@@ -137,6 +140,7 @@ export class Hud {
     this.warn2 = el('div', 'warn', warns);
     this.msg = el('div', 'hud-msg', this.root);
     this.combat = new CombatHudLayer(this.root);
+    this.minimap = new Minimap(this.root);
     this.resize();
   }
 
@@ -152,6 +156,7 @@ export class Hud {
     this.canvas.height = Math.round(this.h * this.dpr);
     this.canvas.style.width = this.w + 'px';
     this.canvas.style.height = this.h + 'px';
+    this.minimap?.resize();
   }
 
   private set(e: HTMLElement, text: string): void {
@@ -234,6 +239,7 @@ export class Hud {
     if (o.ladder) this.drawLadder(c, d, cam);
     this.drawMarkers(c, d, cam);
     this.combat.update(c, d.combat, cam, this.w, this.h, dt);
+    this.minimap.update(d.minimap, dt);
   }
 
   private setWarn(e: HTMLElement, w?: { t: string; cls: string }): void {

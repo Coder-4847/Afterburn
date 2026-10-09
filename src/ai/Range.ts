@@ -1,4 +1,5 @@
 import { Vector3, type Scene } from 'three';
+import type { MapDef } from '../data/maps/types';
 import { Aircraft } from '../aircraft/Aircraft';
 import { TrailEmitter } from '../aircraft/Trails';
 import { DEG } from '../core/math';
@@ -22,18 +23,21 @@ interface DroneSlot {
   trail: TrailEmitter;
 }
 
-/** Where the range sits on the Coral Archipelago, relative to the default spawn (Blue island, heading east). */
+/**
+ * The range is laid out relative to the map's default spawn and heading: balloons dead ahead, the ground-target site a few km
+ * further on, drones orbiting off to either side. [forward, right, altitude offset]
+ */
 const DUMMIES: [number, number, number][] = [
-  [-3500, 620, 380],
-  [-3430, 700, 520],
-  [-3500, 590, 660],
-  [-3350, 760, 800],
+  [1700, -120, -30],
+  [1770, 20, 50],
+  [1700, 160, -60],
+  [1850, 300, 110],
 ];
 
-const DRONES: { id: string; opts: DroneOpts }[] = [
-  { id: 'su27', opts: { cx: -2900, cz: -2300, radius: 2300, altitude: 1000, speed: 185, dir: 1 } },
-  { id: 'mig29', opts: { cx: -2600, cz: 3100, radius: 1900, altitude: 800, speed: 195, dir: -1 } },
-  { id: 'j10c', opts: { cx: -1300, cz: -4000, radius: 2500, altitude: 1500, speed: 200, dir: 1 } },
+const DRONES: { id: string; fwd: number; right: number; radius: number; dAlt: number; speed: number; dir: 1 | -1 }[] = [
+  { id: 'su27', fwd: 2300, right: -2800, radius: 2300, dAlt: 350, speed: 185, dir: 1 },
+  { id: 'mig29', fwd: 2600, right: 2600, radius: 1900, dAlt: 150, speed: 195, dir: -1 },
+  { id: 'j10c', fwd: 3900, right: -4500, radius: 2500, dAlt: 850, speed: 200, dir: 1 },
 ];
 
 const CLUSTER: { kind: GroundKind; name: string; dx: number; dz: number; h: number }[] = [
@@ -58,10 +62,10 @@ export class TrainingRange {
   constructor(private combat: Combat, private scene: Scene, private smoke: ParticleSystem) {}
 
   /** Spiral outwards from a point until there is solid ground (not a beach, not too steep). */
-  private findLand(cx: number, cz: number): Vector3 | null {
+  private findLand(cx: number, cz: number, tol = 7): Vector3 | null {
     const h = (x: number, z: number) => this.combat.env.surfaceAt(x, z, _surf).height;
-    for (let r = 0; r <= 1800; r += 60) {
-      const n = r === 0 ? 1 : Math.max(6, Math.round((r * 2 * Math.PI) / 80));
+    for (let r = 0; r <= 3600; r += 80) {
+      const n = r === 0 ? 1 : Math.max(6, Math.round((r * 2 * Math.PI) / 100));
       for (let i = 0; i < n; i++) {
         const a = (i / n) * Math.PI * 2;
         const x = cx + Math.cos(a) * r;
@@ -70,25 +74,45 @@ export class TrainingRange {
         if (y < 8) continue;
         // flat enough for a cluster: neighbours within a few metres
         let flat = true;
-        for (const [dx, dz] of [[55, 0], [-55, 0], [0, 55], [0, -55]]) if (Math.abs(h(x + dx, z + dz) - y) > 7) flat = false;
+        for (const [dx, dz] of [[55, 0], [-55, 0], [0, 55], [0, -55]]) if (Math.abs(h(x + dx, z + dz) - y) > tol) flat = false;
         if (flat) return new Vector3(x, y, z);
       }
     }
     return null;
   }
 
-  build(hostile: boolean): void {
+  /** Highest ground within a ring (so an orbit clears the mountains on any map). */
+  private ringMax(cx: number, cz: number, r: number): number {
+    let m = 0;
+    for (let i = 0; i < 24; i++) {
+      const a = (i / 24) * Math.PI * 2;
+      m = Math.max(m, this.combat.env.surfaceAt(cx + Math.cos(a) * r, cz + Math.sin(a) * r, _surf).height);
+    }
+    return m;
+  }
+
+  build(hostile: boolean, map: MapDef): void {
     this.clear();
     this.hostile = hostile;
+    const sp = map.spawn;
+    const hd = (sp.heading * Math.PI) / 180;
+    const fx = Math.sin(hd);
+    const fz = -Math.cos(hd);
+    const rx = Math.cos(hd);
+    const rz = Math.sin(hd);
+    const at = (fwd: number, right: number): [number, number] => [sp.x + fx * fwd + rx * right, sp.z + fz * fwd + rz * right];
 
-    for (const [i, [x, y, z]] of DUMMIES.entries()) {
-      const d = new AirDummy(`Target balloon ${i + 1}`, new Vector3(x, y, z));
+    for (const [i, [fwd, right, dAlt]] of DUMMIES.entries()) {
+      const [x, z] = at(fwd, right);
+      const ground = this.combat.env.surfaceAt(x, z, _surf).height;
+      const d = new AirDummy(`Target balloon ${i + 1}`, new Vector3(x, Math.max(sp.altitude + dAlt, ground + 120), z));
       this.combat.addDummy(d);
       this.dummies.push(d);
     }
 
-    // ground cluster on the nearest high ground to the volcano's western foothills
-    const site = this.findLand(-2400, 700) ?? this.findLand(-6800, 500);
+    // ground cluster on flat land a few km ahead
+    const [gx, gz] = at(3000, 300);
+    const site = this.findLand(gx, gz) ?? this.findLand(gx, gz, 30);
     if (site) {
       for (const g of CLUSTER) {
         const x = site.x + g.dx;
@@ -101,7 +125,11 @@ export class TrainingRange {
       }
     }
 
-    for (const spec of DRONES) this.addDrone(spec.id, spec.opts);
+    for (const spec of DRONES) {
+      const [cx, cz] = at(spec.fwd, spec.right);
+      const alt = Math.max(sp.altitude + spec.dAlt, this.ringMax(cx, cz, spec.radius) + 450);
+      this.addDrone(spec.id, { cx, cz, radius: spec.radius, altitude: alt, speed: spec.speed, dir: spec.dir });
+    }
   }
 
   private addDrone(id: string, opts: DroneOpts): void {

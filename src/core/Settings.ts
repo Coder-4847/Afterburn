@@ -8,6 +8,8 @@ export type TimeOfDay = 'day' | 'sunset';
 export type TerrainAssist = 'off' | 'warn' | 'auto';
 export type ControlScheme = 'mouse' | 'mouse-throttle-ws';
 export type DroneMode = 'passive' | 'hostile';
+export type SortieMode = 'training' | 'skirmish';
+export type AiSkillId = 'rookie' | 'regular' | 'ace';
 
 export interface Settings {
   version: number;
@@ -39,6 +41,14 @@ export interface Settings {
   damageNumbers: boolean;
   /** Training-range drones: evade only, or hunt the player. */
   drones: DroneMode;
+  // sortie setup
+  mapId: string;
+  sortie: SortieMode;
+  /** AI jets on the player's team (wingmen) and on the enemy team, in a skirmish. */
+  blueAI: number;
+  redAI: number;
+  aiSkill: AiSkillId;
+  minimap: boolean;
   /** Selected aircraft id (see data/aircraft). */
   aircraftId: string;
 }
@@ -66,6 +76,12 @@ export const DEFAULT_SETTINGS: Settings = {
   masterVolume: 0.7,
   damageNumbers: true,
   drones: 'passive',
+  mapId: 'coral',
+  sortie: 'training',
+  blueAI: 2,
+  redAI: 3,
+  aiSkill: 'regular',
+  minimap: true,
   aircraftId: 'f16c',
 };
 

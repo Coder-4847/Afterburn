@@ -35,7 +35,47 @@ export interface ArchipelagoGen {
   scatter: { count: number; minR: number; maxR: number; maxPeak: number };
 }
 
-export type TerrainGen = ArchipelagoGen;
+export interface MesaDef {
+  x: number;
+  z: number;
+  rx: number;
+  rz: number;
+  rot: number;
+  /** Height of the flat top above the basin floor (m). */
+  height: number;
+}
+
+/** Sandstorm Basin: a flat dune sea ringed by flat-topped mesas and broken highlands. */
+export interface DesertGen {
+  kind: 'desert';
+  /** Height of the basin floor (m). Also the height the terrain fades to at the map edge. */
+  floor: number;
+  duneAmp: number;
+  highlandAmp: number;
+  /** 0..1 fraction of the map covered by highlands. */
+  highlandCover: number;
+  mesas: MesaDef[];
+}
+
+export interface BasinDef {
+  x: number;
+  z: number;
+  rx: number;
+  rz: number;
+  rot: number;
+  /** Valley floor height (m). With `lake` the floor is carved below sea level instead. */
+  floor: number;
+  lake?: boolean;
+}
+
+/** Frostline Alps: a mountain island of high ridges, flat glacial valleys and frozen lakes, falling away to icy sea. */
+export interface AlpineGen {
+  kind: 'alpine';
+  peak: number;
+  basins: BasinDef[];
+}
+
+export type TerrainGen = ArchipelagoGen | DesertGen | AlpineGen;
 
 export interface LightingPreset {
   sunAzimuth: number; // degrees, compass direction the sun is *in*
@@ -100,6 +140,10 @@ export interface MapDef {
   lighting: Record<TimeOfDay, LightingPreset>;
   airstrips: AirstripDef[];
   clouds?: CloudDef;
+  /** Maps with no sea: a flat plane of this colour at height y fills the world beyond the terrain (and the water is hidden). */
+  groundPlane?: { color: number; y: number };
+  /** Short label for menus. */
+  tagline?: string;
   /** Half-extent of the combat zone (m). Leaving it starts the return-to-combat countdown. */
   boundary: number;
   /** Default start for free flight: position, heading (deg), altitude. */

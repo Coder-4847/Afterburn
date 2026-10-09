@@ -169,6 +169,20 @@ export class Combat implements FighterHooks {
     void this.flat;
   }
 
+  /** Remove everything this combat manager put in the scene (used when a sortie is rebuilt). */
+  dispose(): void {
+    this.scene.remove(this.root);
+    this.root.traverse((o) => {
+      const m = o as Mesh;
+      m.geometry?.dispose();
+    });
+    this.tracerGeo.dispose();
+    this.flat.dispose();
+    for (const m of [...this.missiles, ...this.bombs]) m.mesh.traverse((o) => (o as Mesh).geometry?.dispose());
+    this.fighters.length = 0;
+    this.byId.clear();
+  }
+
   // ---- registry --------------------------------------------------------------------------------
 
   addFighter(f: Fighter): void {

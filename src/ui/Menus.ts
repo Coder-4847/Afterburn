@@ -1,6 +1,8 @@
 import { codeLabel, type Action, type Input } from '../core/Input';
 import type { DifficultyId, QualitySetting, Settings, SettingsStore } from '../core/Settings';
 import { DIFFICULTIES } from '../data/difficulty';
+import { MAPS, MAP_LIST } from '../data/maps';
+import { SKILLS } from '../ai/Pilot';
 
 export interface MenuCallbacks {
   start(): void;
@@ -8,6 +10,8 @@ export interface MenuCallbacks {
   respawnAir(): void;
   respawnRunway(): void;
   hangar(): void;
+  /** Back to the sortie setup screen from the pause menu. */
+  setup(): void;
   aircraftName(): string;
   /** Called after any setting changes that needs a world rebuild (time of day). */
   changed(key: keyof Settings): void;
@@ -38,6 +42,7 @@ const SHOWN: { label: string; actions: Action[]; extra?: string }[] = [
   { label: 'Airbrake / wheel brakes', actions: ['airbrake'] },
   { label: 'Landing gear', actions: ['gear'] },
   { label: 'Camera', actions: ['camera'] },
+  { label: 'Full map', actions: ['map'] },
   { label: 'Look around (hold)', actions: ['lookAround'] },
   { label: 'Pause', actions: ['pause'] },
   { label: 'FPS counter', actions: ['toggleFps'] },
@@ -100,8 +105,24 @@ export class Menus {
     const o = el('div', 'overlay solid', this.clear());
     const p = el('div', 'panel wide', o);
     el('p', 'brand', p, 'AFTERBURN');
-    el('h1', 'title', p, 'Training Range');
-    el('p', 'sub', p, 'Coral Archipelago. Airborne east of the Blue island with target balloons dead ahead, a ground-target site on the volcano foothills and three Red drones. Left mouse button fires the cannon, right button the selected weapon. Land and stop on a Blue runway to rearm and repair.');
+    const s = this.settings.value;
+    const map = MAPS[s.mapId] ?? MAP_LIST[0];
+    el('h1', 'title', p, s.sortie === 'training' ? 'Training Range' : 'Skirmish');
+    el('p', 'sub', p, `${map.name}. ${s.sortie === 'training'
+      ? 'Airborne with target balloons dead ahead, a ground-target site and three Red drones.'
+      : `Blue (you and ${s.blueAI} AI wingmen) against Red (${s.redAI} AI jets). They respawn, so the fight goes on.`} Left mouse button fires the cannon, right button the selected weapon. Land and stop on a Blue runway to rearm and repair.`);
+
+    el('div', 'section', p, 'Sortie');
+    this.select(p, 'Map', 'mapId', MAP_LIST.map((m) => [m.id, m.name]), () => this.showReady(), `${map.tagline ?? ''}. ${map.description}`);
+    this.select(p, 'Mode', 'sortie', [['training', 'Training range'], ['skirmish', 'Skirmish (AI teams)']], () => this.showReady());
+    if (s.sortie === 'skirmish') {
+      this.select(p, 'Blue wingmen', 'blueAI', [0, 1, 2, 3, 4, 5, 6].map((n) => [String(n), String(n)]));
+      this.select(p, 'Red opponents', 'redAI', [1, 2, 3, 4, 5, 6, 7, 8].map((n) => [String(n), String(n)]));
+      this.select(p, 'AI skill', 'aiSkill', Object.entries(SKILLS).map(([id, k]) => [id, k.label]), undefined, 'Reaction time, aim, countermeasure use');
+    } else {
+      this.select(p, 'Red drones', 'drones', [['passive', 'Passive (evade only)'], ['hostile', 'Hostile (they shoot back)']], undefined, 'Hostile drones hunt you with guns and missiles');
+    }
+    el('p', 'hint-line', p, 'Changing the map or mode reloads the world when you press the button below.');
 
     el('div', 'section', p, 'Aircraft');
     const hb = el('button', 'btn', p);
@@ -111,9 +132,6 @@ export class Menus {
 
     el('div', 'section', p, 'Controls');
     this.controlsList(p);
-
-    el('div', 'section', p, 'Training range');
-    this.select(p, 'Red drones', 'drones', [['passive', 'Passive (evade only)'], ['hostile', 'Hostile (they shoot back)']], undefined, 'Hostile drones hunt you with guns and missiles');
 
     el('div', 'section', p, 'Flight difficulty');
     this.select(p, 'Difficulty', 'difficulty', Object.values(DIFFICULTIES).map((d) => [d.id, d.label]), (v) => this.cb.changed('difficulty'), DIFFICULTIES[this.settings.value.difficulty].description);
@@ -132,7 +150,7 @@ export class Menus {
     const p = el('div', 'panel', o);
     el('p', 'brand', p, 'AFTERBURN');
     el('h1', 'title', p, 'Paused');
-    el('p', 'sub', p, 'Training Range · Coral Archipelago');
+    el('p', 'sub', p, `${this.settings.value.sortie === 'training' ? 'Training Range' : 'Skirmish'} · ${(MAPS[this.settings.value.mapId] ?? MAP_LIST[0]).name}`);
     const mk = (label: string, sub: string, fn: () => void, primary = false) => {
       const b = el('button', 'btn' + (primary ? ' primary' : ''), p);
       b.append(label);
@@ -142,6 +160,7 @@ export class Menus {
     mk('RESUME', '', () => this.cb.resume(), true);
     mk('Respawn in the air', 'Restart over the Blue island at cruise speed', () => this.cb.respawnAir());
     mk('Start on the runway', 'Takeoff practice: throttle up, hold Space, pull up at ~270 km/h', () => this.cb.respawnRunway());
+    mk('Sortie setup', 'Change map, mode or AI teams', () => this.cb.setup());
     mk('Hangar', `Now flying: ${this.cb.aircraftName()}. Changing aircraft respawns you.`, () => this.cb.hangar());
     mk('Settings', 'Graphics, controls, assists', () => this.showSettings());
     mk('Controls', 'Key bindings', () => this.showControls());
@@ -209,6 +228,7 @@ export class Menus {
     this.toggle(p, 'Pitch ladder', 'hudPitchLadder');
     this.toggle(p, 'Heading tape', 'hudHeadingTape');
     this.toggle(p, 'Flight path marker', 'hudFlightPath');
+    this.toggle(p, 'Minimap', 'minimap', 'M opens the full map');
 
     const back = el('button', 'btn', p, 'Back');
     back.style.marginTop = '18px';
@@ -226,9 +246,10 @@ export class Menus {
       const op = el('option', '', sel, t);
       op.value = v;
     }
+    const numeric = typeof this.settings.value[key] === 'number';
     sel.value = String(this.settings.value[key]);
     sel.addEventListener('change', () => {
-      this.settings.set(key, sel.value as Settings[K]);
+      this.settings.set(key, (numeric ? Number(sel.value) : sel.value) as Settings[K]);
       if (key === 'difficulty' && hintEl) hintEl.textContent = DIFFICULTIES[sel.value as DifficultyId].description;
       after?.(sel.value);
     });
