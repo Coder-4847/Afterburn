@@ -16,6 +16,8 @@ export interface DifficultyDef {
   gMul: number;
   /** Multiplier on lift. */
   liftMul: number;
+  /** Multiplier on all damage the player takes (Arcade is forgiving, Realistic is not). */
+  damageTaken: number;
   /** Default terrain assist for this difficulty. */
   terrainAssist: TerrainAssist;
   /** Touchdown tolerances. */
@@ -33,6 +35,7 @@ export const DIFFICULTIES: Record<DifficultyId, DifficultyDef> = {
     stallRecovery: 1.3,
     gMul: 1.28,
     liftMul: 1.1,
+    damageTaken: 0.55,
     terrainAssist: 'auto',
     landing: { sink: 9, roll: 35 * Math.PI / 180, speed: 150, pitchMin: -6 * Math.PI / 180, pitchMax: 22 * Math.PI / 180 },
   },
@@ -46,6 +49,7 @@ export const DIFFICULTIES: Record<DifficultyId, DifficultyDef> = {
     stallRecovery: 1,
     gMul: 1.12,
     liftMul: 1,
+    damageTaken: 0.8,
     terrainAssist: 'warn',
     landing: { sink: 6, roll: 20 * Math.PI / 180, speed: 125, pitchMin: -3 * Math.PI / 180, pitchMax: 18 * Math.PI / 180 },
   },
@@ -59,6 +63,7 @@ export const DIFFICULTIES: Record<DifficultyId, DifficultyDef> = {
     stallRecovery: 0.75,
     gMul: 1,
     liftMul: 1,
+    damageTaken: 1,
     terrainAssist: 'warn',
     landing: { sink: 4, roll: 12 * Math.PI / 180, speed: 110, pitchMin: 0, pitchMax: 15 * Math.PI / 180 },
   },

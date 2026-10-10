@@ -63,7 +63,7 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  version: 1,
+  version: 2,
   quality: 'auto',
   resolutionScale: 1,
   adaptiveResolution: true,
@@ -75,7 +75,7 @@ export const DEFAULT_SETTINGS: Settings = {
   controlScheme: 'mouse',
   bindings: {},
   difficulty: 'arcade',
-  terrainAssist: 'auto',
+  terrainAssist: 'warn',
   speedUnit: 'kmh',
   cameraShake: true,
   hudPitchLadder: true,
@@ -111,7 +111,13 @@ export class SettingsStore {
     this.value = { ...DEFAULT_SETTINGS };
     try {
       const raw = localStorage.getItem(KEY);
-      if (raw) Object.assign(this.value, JSON.parse(raw));
+      if (raw) {
+        const saved = JSON.parse(raw) as Partial<Settings>;
+        // v2: the automatic pull-up is no longer on by default (it surprised people during landing approaches)
+        if ((saved.version ?? 1) < 2) delete saved.terrainAssist;
+        Object.assign(this.value, saved);
+        this.value.version = 2;
+      }
       // older saves called the AI mode "skirmish"
       if ((this.value.sortie as string) === 'skirmish') this.value.sortie = 'tdm';
     } catch {

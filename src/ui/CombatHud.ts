@@ -47,6 +47,10 @@ export interface CombatHud {
   numbers: { pos: Vector3; text: string; age: number; kill: boolean }[];
   kills: number;
   deaths: number;
+  /** Hostile aircraft within radar range, nearest first. */
+  contacts: { pos: Vector3; dist: number; selected: boolean }[];
+  /** Where the nearest enemy is, relative to our nose. */
+  nearest: { name: string; dist: number; bearing: number; elevation: number } | null;
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, parent?: HTMLElement, text?: string): HTMLElementTagNameMap[K] {
@@ -171,6 +175,7 @@ export class CombatHudLayer {
     // ---- canvas ----
     c.save();
     c.shadowBlur = 3;
+    this.drawContacts(c, d, cam, w, h);
     this.drawTarget(c, d, cam, w, h);
     this.drawPipper(c, d, cam, w, h);
     this.drawMarkers(c, d, w, h);
@@ -179,6 +184,78 @@ export class CombatHudLayer {
     this.drawRwr(c, d, w, h, scale);
     this.drawSilhouette(c, d, w, h, scale);
     c.restore();
+  }
+
+  // ---- radar picture: every hostile in range, plus a pointer to the nearest ---------------------
+
+  private drawContacts(c: CanvasRenderingContext2D, d: CombatHud, cam: PerspectiveCamera, w: number, h: number): void {
+    const pt = { x: 0, y: 0 };
+    const margin = 40;
+    let arrows = 0;
+    c.font = '600 10px ui-monospace, Consolas, monospace';
+    c.textAlign = 'center';
+    for (const k of d.contacts) {
+      if (k.selected) continue; // the selected target gets the full box
+      const on = this.project(k.pos, cam, w, h, pt);
+      const inside = on && pt.x > margin && pt.x < w - margin && pt.y > margin && pt.y < h - margin;
+      c.strokeStyle = P.foe;
+      c.fillStyle = P.foe;
+      c.lineWidth = 1.8;
+      if (inside) {
+        const s = 8;
+        c.beginPath();
+        c.moveTo(pt.x, pt.y - s);
+        c.lineTo(pt.x + s, pt.y);
+        c.lineTo(pt.x, pt.y + s);
+        c.lineTo(pt.x - s, pt.y);
+        c.closePath();
+        c.stroke();
+        c.fillText((k.dist / 1000).toFixed(1) + ' km', pt.x, pt.y + s + 12);
+      } else if (arrows < 3) {
+        arrows++;
+        let dx = pt.x - w / 2;
+        let dy = pt.y - h / 2;
+        if (!on) {
+          dx = -dx;
+          dy = -dy;
+        }
+        const ang = Math.atan2(dy, dx);
+        const kk = Math.min((w / 2 - margin) / Math.max(1e-3, Math.abs(Math.cos(ang))), (h / 2 - margin) / Math.max(1e-3, Math.abs(Math.sin(ang))));
+        const ax = w / 2 + Math.cos(ang) * kk;
+        const ay = h / 2 + Math.sin(ang) * kk;
+        c.save();
+        c.translate(ax, ay);
+        c.rotate(ang);
+        c.globalAlpha = arrows === 1 ? 1 : 0.65;
+        c.beginPath();
+        c.moveTo(11, 0);
+        c.lineTo(-7, -7);
+        c.lineTo(-3, 0);
+        c.lineTo(-7, 7);
+        c.closePath();
+        c.fill();
+        c.restore();
+        c.globalAlpha = 1;
+        c.fillText((k.dist / 1000).toFixed(1), ax - Math.cos(ang) * 24, ay - Math.sin(ang) * 24 + 3);
+      }
+    }
+    // text readout under the minimap
+    const n = d.nearest;
+    if (n) {
+      const deg = Math.abs(Math.round((n.bearing * 180) / Math.PI));
+      const where = deg < 12 ? 'AHEAD' : deg > 150 ? 'BEHIND' : (n.bearing > 0 ? 'RIGHT ' : 'LEFT ') + deg + '°';
+      const vert = n.elevation > 0.12 ? '  ABOVE' : n.elevation < -0.12 ? '  BELOW' : '';
+      c.textAlign = 'left';
+      c.font = '600 10px ui-monospace, Consolas, monospace';
+      c.fillStyle = 'rgba(232,242,247,0.6)';
+      c.fillText('NEAREST ENEMY', 18, 262);
+      c.font = '600 14px ui-monospace, Consolas, monospace';
+      c.fillStyle = P.foe;
+      c.fillText((n.dist / 1000).toFixed(1) + ' km', 18, 280);
+      c.font = '600 12px ui-monospace, Consolas, monospace';
+      c.fillText(where + vert, 18, 297);
+    }
+    c.textAlign = 'center';
   }
 
   // ---- target box, lock ring, edge arrow --------------------------------------------------------

@@ -52,6 +52,8 @@ export class Fighter implements Target, Attacker {
   recent = new Map<number, { who: Attacker; dmg: number; t: number }>();
   /** Last attacker and weapon, for kill credit. */
   lastHit: { who: Attacker; weapon: string; t: number } | null = null;
+  /** Multiplier on incoming damage (the player's difficulty setting). */
+  damageScale = 1;
   /** Seconds since the last time this fighter was hit (HUD flash, AI reactions). */
   sinceHit = 99;
   /** For debris and effects: the part groups that are currently gone. */
@@ -160,8 +162,9 @@ export class Fighter implements Target, Attacker {
     if (this.state !== 'alive') return;
     const m = this.damage.get(h.moduleId);
     const before = this.damage.health();
-    const ev = this.damage.damage(m, damage, incendiary);
-    const dealt = Math.max(0, damage);
+    const scaled = damage * this.damageScale;
+    const ev = this.damage.damage(m, scaled, incendiary);
+    const dealt = Math.max(0, scaled);
     this.noteAttack(attacker, weapon, dealt);
     this.hooks?.hitEvent(attacker, this, dealt, weapon, h.point);
     if (ev.length) this.hooks?.damageEvents(this, ev, attacker, weapon);
@@ -179,7 +182,7 @@ export class Fighter implements Target, Attacker {
       const d = _a.distanceTo(point) - 1.2;
       if (d >= radius) continue;
       const k = Math.pow(1 - clamp(d / radius, 0, 1), 1.4);
-      const amt = warhead * k * m.blastWeight * (0.85 + Math.random() * 0.3);
+      const amt = warhead * k * m.blastWeight * (0.85 + Math.random() * 0.3) * this.damageScale;
       if (amt <= 0.2) continue;
       total += amt;
       all.push(...this.damage.damage(m, amt));

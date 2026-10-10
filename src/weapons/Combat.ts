@@ -256,15 +256,17 @@ export class Combat implements FighterHooks {
   cycleTarget(f: Fighter): void {
     const fl = f.aircraft.flight;
     fl.forward(_v1);
-    const list = this.candidates(f)
+    const all = this.candidates(f)
       .map((t) => {
         _v2.copy(t.pos).sub(fl.pos);
         const d = _v2.length();
         const ang = Math.acos(clamp(_v1.dot(_v2) / (d || 1), -1, 1));
         return { t, d, ang };
       })
-      .filter((c) => c.ang < 100 * DEG)
       .sort((a, b) => a.d - b.d);
+    // prefer what is in front of us, but with nothing there pick the nearest anywhere (the HUD arrow then shows where it is)
+    const front = all.filter((c) => c.ang < 100 * DEG);
+    const list = front.length ? front : all;
     if (list.length === 0) {
       f.weapons.target = null;
       return;

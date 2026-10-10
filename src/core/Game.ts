@@ -4,6 +4,7 @@ import { Skirmish } from '../ai/Skirmish';
 import { Aircraft } from '../aircraft/Aircraft';
 import { GameAudio } from '../audio/Audio';
 import { Music } from '../audio/Music';
+import { codeLabel } from './Input';
 import { palette, setColorblind } from '../ui/palette';
 import { Match, formatClock } from '../modes/Match';
 import { ScoreboardOverlay, type ScoreData } from '../ui/Scoreboard';
@@ -80,6 +81,8 @@ export class Game {
   private music = new Music(this.audio);
   private scoreboard!: ScoreboardOverlay;
   private matchEl!: HTMLElement;
+  private briefEl!: HTMLElement;
+  private briefUntil = 0;
   private matchText = '';
   private mapId = '';
   private builtSig = '';
@@ -170,6 +173,9 @@ export class Game {
     this.matchEl.className = 'hud-match';
     this.matchEl.style.display = 'none';
     this.hud.root.appendChild(this.matchEl);
+    this.briefEl = document.createElement('div');
+    this.briefEl.className = 'hud-brief';
+    this.hud.root.appendChild(this.briefEl);
     this.canvas.addEventListener('webglcontextlost', (e) => {
       e.preventDefault();
       this.fatal('Graphics context lost', 'The browser reclaimed the graphics card (often after sleep, a driver reset or too many tabs). Reload to continue.');
@@ -275,6 +281,7 @@ export class Game {
     this.numbers = [];
     this.hud.minimap.setMap(this.world.map, this.world.heightmap);
     this.builtSig = this.sortieSig();
+    this.briefed = false;
     this.applySetting('difficulty', true);
     this.world.terrain.prewarm(this.rig.camera.position);
   }
@@ -323,7 +330,10 @@ export class Game {
         break;
       case 'fov': this.rig.baseFov = s.fov; break;
       case 'timeOfDay': this.world?.setTimeOfDay(s.timeOfDay); break;
-      case 'difficulty': if (this.player) this.player.flight.difficulty = DIFFICULTIES[s.difficulty]; break;
+      case 'difficulty':
+        if (this.player) this.player.flight.difficulty = DIFFICULTIES[s.difficulty];
+        if (this.fighter) this.fighter.damageScale = DIFFICULTIES[s.difficulty].damageTaken;
+        break;
       case 'cameraShake':
       case 'reduceMotion':
         this.rig.shakeEnabled = s.cameraShake && !s.reduceMotion;
@@ -399,6 +409,7 @@ export class Game {
     this.aim.snapTo(this.player.flight); // never resume with a stale reticle
     this.audio.setPaused(false);
     if (!this.settings.value.seenIntro) this.settings.set('seenIntro', true);
+    if (!this.briefed) this.showBrief();
   }
 
   pause(): void {
@@ -427,6 +438,7 @@ export class Game {
     if (this.fighter) this.combat.removeFighter(this.fighter);
     const prev = this.fighter?.stats;
     this.fighter = new Fighter('You', 'blue', p, true);
+    this.fighter.damageScale = DIFFICULTIES[this.settings.value.difficulty].damageTaken;
     if (prev) this.fighter.stats = prev;
     this.combat.addFighter(this.fighter);
     this.buildHudModules();
@@ -474,8 +486,33 @@ export class Game {
 
   private groundAt = (x: number, z: number): number => this.world.surfaceAt(x, z, _surf).height;
 
+  /** Where the player starts and respawns in the air. Team deathmatch starts out toward the middle, a few km from the enemy. */
+  private spawnPoint(): { x: number; z: number; heading: number; altitude: number; speed: number } {
+    const map = this.world.map;
+    const sp = map.spawn;
+    if (this.settings.value.sortie === 'tdm' && this.skirmish) {
+      const strip = map.airstrips.find((a) => a.team === 'blue');
+      if (strip) {
+        return {
+          x: strip.x * 0.48,
+          z: strip.z * 0.48,
+          heading: Math.atan2(-strip.x, strip.z) / DEG,
+          altitude: Math.max(sp.altitude, this.skirmish.cruiseAlt),
+          speed: sp.speed,
+        };
+      }
+    }
+    return sp;
+  }
+
+  private distToStrip(): number {
+    const p = this.player.flight.pos;
+    const a = this.world.nearestAirstrip(p.x, p.z);
+    return Math.hypot(a.def.x - p.x, a.def.z - p.z);
+  }
+
   spawnAir(): void {
-    const m = this.world.map.spawn;
+    const m = this.spawnPoint();
     const f = this.player.flight;
     const c = this.player.controls;
     const ground = this.groundAt(m.x, m.z);
@@ -736,7 +773,7 @@ export class Game {
     } else if (!this.recovering && !this.crashed) {
       this.aim.addMouse(_mouse.x, _mouse.y, this.rig.right, this.rig.up, s.mouseSensitivity, s.invertY);
     }
-    if (this.kb.pitch !== 0 || this.kb.roll !== 0) this.aim.relaxToNose(f, 1 - Math.exp(-6 * dt));
+    if (this.kb.pitch !== 0 || this.kb.roll !== 0 || this.kb.yaw !== 0) this.aim.relaxToNose(f, 1 - Math.exp(-6 * dt));
     this.aim.clampToNose(f);
   }
 
@@ -762,8 +799,9 @@ export class Game {
       c.yaw = clamp(this.cmd.yaw + this.kb.yaw, -1, 1);
       void s;
 
-      // arcade quality of life: tuck the gear away once clearly airborne and fast
-      if (diff.id === 'arcade' && c.gearDown && f.gearPos > 0.99 && !f.grounded && f.agl > 45 && f.speed > 105) {
+      // arcade quality of life: tuck the gear away once clearly airborne and fast. Never near an airstrip: that is where you
+      // want it down (a landing approach, or a touch-and-go), and it must stay down until you raise it yourself.
+      if (diff.id === 'arcade' && c.gearDown && f.gearPos > 0.99 && !f.grounded && f.agl > 120 && f.speed > 130 && this.distToStrip() > 5000) {
         c.gearDown = false;
         this.say('GEAR UP', 1.4);
       }
@@ -795,7 +833,8 @@ export class Game {
     // don't fight a deliberate landing approach
     const near = this.world.nearestAirstrip(f.pos.x, f.pos.z);
     const dNear = Math.hypot(near.def.x - f.pos.x, near.def.z - f.pos.z);
-    const landing = f.grounded || (f.gearPos > 0.5 && dNear < 3500 && f.agl < 400);
+    // (also when the gear is still up but we are slow and low near a runway: that is a landing in the making)
+    const landing = f.grounded || (f.gearPos > 0.5 && dNear < 3500 && f.agl < 400) || (dNear < 2500 && f.agl < 250 && f.speed < 170);
     if (mode === 'off' || landing) {
       this.pullUp = 0;
       this.recovering = false;
@@ -1015,7 +1054,34 @@ export class Game {
   }
 
   /** Top-of-screen score line for team deathmatch. */
+  private briefed = false;
+
+  /** A short "what is going on" card at the start of a sortie: the objective and the three things to do first. */
+  private showBrief(): void {
+    this.briefed = true;
+    const s = this.settings.value;
+    const keys = (a: Parameters<Input['codes']>[0]) => this.input.codes(a).map(codeLabel).join('/');
+    let title: string;
+    let goal: string;
+    if (s.sortie === 'tdm') {
+      title = 'TEAM DEATHMATCH';
+      goal = `Shoot down the RED team. First side to ${s.scoreLimit} kills wins${s.timeLimit ? ' (or most kills in ' + s.timeLimit + ' min)' : ''}.`;
+    } else if (s.sortie === 'training') {
+      title = 'TRAINING RANGE';
+      goal = 'Balloons dead ahead, a ground-target site and three Red drones. Nothing here is trying to kill you unless you set the drones to hostile.';
+    } else {
+      title = 'FREE FLIGHT';
+      goal = 'An empty sky. Lower the gear (' + keys('gear') + ') and land on a runway to practise.';
+    }
+    const find = s.sortie === 'tdm' ? 'Red markers on the HUD and the minimap show where the enemy is. The arrow at the screen edge points to the nearest one.' : 'Red markers show enemy aircraft; the minimap (top left) shows everything nearby.';
+    this.briefEl.innerHTML =
+      `<b>${title}</b><span>${goal}</span><span>${find}</span>` +
+      `<i>${keys('cycleTarget')} pick a target  ·  hold ${keys('fireGun')} cannon  ·  ${keys('fireMissile')} fire missile (let the ring fill first)  ·  ${keys('flares')} flares  ${keys('chaff')} chaff  ·  ${keys('map')} map</i>`;
+    this.briefUntil = this.clock + 22;
+  }
+
   private updateMatchHud(): void {
+    this.briefEl.style.opacity = this.clock < this.briefUntil ? String(Math.min(1, (this.briefUntil - this.clock) / 2)) : '0';
     const m = this.match;
     if (!m || this.state === 'results') {
       if (this.matchEl.style.display !== 'none') this.matchEl.style.display = 'none';
@@ -1186,7 +1252,29 @@ export class Game {
     const missiles = this.combat.threats(fg).slice(0, 4).map((t) => ({ bearing: this.combat.bearingTo(fg, t.missile.pos).bearing, eta: t.eta, kind: t.missile.kind }));
     const rwr = this.combat.radarLocks(fg).map((l) => ({ bearing: this.combat.bearingTo(fg, l.by.pos).bearing, locked: l.locked }));
 
+    // radar picture: hostile aircraft in range, nearest first
+    const contacts: CombatHud['contacts'] = [];
+    for (const o of this.combat.fighters) {
+      if (o.team === fg.team || !o.alive) continue;
+      const dist = o.pos.distanceTo(fl.pos);
+      if (dist < 16000) contacts.push({ pos: o.pos, dist, selected: o === tg });
+    }
+    for (const o of this.combat.dummies) {
+      if (!o.alive) continue;
+      const dist = o.pos.distanceTo(fl.pos);
+      if (dist < 9000) contacts.push({ pos: o.pos, dist, selected: o === tg });
+    }
+    contacts.sort((a, b) => a.dist - b.dist);
+    let nearest: CombatHud['nearest'] = null;
+    if (contacts.length) {
+      const n = contacts[0];
+      const brg = this.combat.bearingTo(fg, n.pos);
+      nearest = { name: '', dist: n.dist, bearing: brg.bearing, elevation: brg.elevation };
+    }
+
     return {
+      contacts: contacts.slice(0, 8),
+      nearest,
       group: w.group,
       groupLabel: GROUP_LABEL[w.group],
       storeName,

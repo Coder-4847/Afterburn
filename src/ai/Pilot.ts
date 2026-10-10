@@ -31,9 +31,9 @@ export interface SkillDef {
 }
 
 export const SKILLS: Record<AiSkill, SkillDef> = {
-  rookie: { label: 'Rookie', reaction: 1.5, aimErr: 0.032, gunAng: 0.07, gunRange: 650, missileCool: 20, cm: 0.35, bvr: 6500, g: 0.7 },
-  regular: { label: 'Regular', reaction: 0.8, aimErr: 0.016, gunAng: 0.045, gunRange: 850, missileCool: 13, cm: 0.65, bvr: 10500, g: 0.88 },
-  ace: { label: 'Ace', reaction: 0.3, aimErr: 0.006, gunAng: 0.032, gunRange: 1000, missileCool: 8, cm: 0.95, bvr: 14500, g: 1 },
+  rookie: { label: 'Rookie', reaction: 1.5, aimErr: 0.032, gunAng: 0.07, gunRange: 650, missileCool: 38, cm: 0.35, bvr: 4500, g: 0.7 },
+  regular: { label: 'Regular', reaction: 0.8, aimErr: 0.016, gunAng: 0.045, gunRange: 850, missileCool: 26, cm: 0.65, bvr: 7000, g: 0.88 },
+  ace: { label: 'Ace', reaction: 0.3, aimErr: 0.006, gunAng: 0.032, gunRange: 1000, missileCool: 15, cm: 0.95, bvr: 10000, g: 1 },
 };
 
 type Mode = 'patrol' | 'bvr' | 'wvr' | 'defend' | 'evade' | 'rtb';
@@ -65,7 +65,7 @@ export class PilotBrain implements Brain {
   private evadeT = 0;
   private evadeSide = 1;
   private cmCool = 0;
-  private missileCool = 4 + Math.random() * 6;
+  private missileCool = 14 + Math.random() * 14;
   private crank = 0;
   private crankSide = 1;
   private burst = 0;
@@ -95,7 +95,7 @@ export class PilotBrain implements Brain {
     this.evadeT = 0;
     this.crank = 0;
     this.rtbBlock = 0;
-    this.missileCool = 4 + Math.random() * 6;
+    this.missileCool = 14 + Math.random() * 14;
     this.aim.snapTo(f.aircraft.flight);
   }
 
@@ -391,7 +391,7 @@ export class PilotBrain implements Brain {
         out.applyAxisAngle(UP, this.crankSide * 38 * DEG);
         out.y = clamp(out.y, -0.2, 0.2);
       }
-      if (w.group === 1 && w.lock.locked && dist < sk.bvr && angLos < 50 * DEG && this.missileCool <= 0) {
+      if (w.group === 1 && w.lock.locked && dist < sk.bvr && angLos < 50 * DEG && this.missileCool <= 0 && this.combat.threats(en).length < 2) {
         if (this.combat.fireMissile(f)) {
           this.missileCool = sk.missileCool;
           this.crank = 6;
@@ -443,9 +443,9 @@ export class PilotBrain implements Brain {
     if (this.burst > 0 && w.gunAmmo > 0) this.combat.fireGun(f, dt);
 
     // missiles: infrared when the target is in the seeker cone
-    if (w.group === 0 && w.lock.locked && dist > 500 && dist < 4200 && angLos < 35 * DEG && this.missileCool <= 0 && w.remaining('ir') > 0) {
+    if (w.group === 0 && w.lock.locked && dist > 500 && dist < 4200 && angLos < 35 * DEG && this.missileCool <= 0 && w.remaining('ir') > 0 && this.combat.threats(en).length < 2) {
       if (this.combat.fireMissile(f)) this.missileCool = sk.missileCool;
-    } else if (w.group === 1 && w.lock.locked && dist > 900 && this.missileCool <= 0 && angLos < 45 * DEG) {
+    } else if (w.group === 1 && w.lock.locked && dist > 900 && this.missileCool <= 0 && angLos < 45 * DEG && this.combat.threats(en).length < 2) {
       if (this.combat.fireMissile(f)) this.missileCool = sk.missileCool;
     }
 

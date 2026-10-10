@@ -81,11 +81,13 @@ export class Skirmish {
     const len = Math.hypot(toCx, toCz) || 1;
     const dx = toCx / len;
     const dz = toCz / len;
-    // spread each strip's jets out sideways and up so they don't spawn inside each other
+    // start well out from the strip toward the middle of the map, so the two teams are a few km apart, not a transatlantic flight
+    // (and spread each strip's jets out sideways so they don't spawn inside each other)
     const k = Math.floor(s.index / strips.length);
     const side = (k % 2 === 0 ? 1 : -1) * Math.ceil(k / 2) * 320;
-    const x = strip.x + dx * (700 + 250 * k) - dz * side;
-    const z = strip.z + dz * (700 + 250 * k) + dx * side;
+    const out = len * 0.52 + 250 * k;
+    const x = strip.x + dx * out - dz * side;
+    const z = strip.z + dz * out + dx * side;
     const ground = this.combat.env.surfaceAt(x, z, _surf).height;
     const alt = Math.max(this.cruise + 120 * (k % 4), ground + 500);
     const f = s.fighter;
@@ -117,6 +119,11 @@ export class Skirmish {
       s.fighter.aircraft.dispose();
     }
     this.slots = [];
+  }
+
+  /** Fighting altitude for this map. */
+  get cruiseAlt(): number {
+    return this.cruise;
   }
 
   get fighters(): Fighter[] {

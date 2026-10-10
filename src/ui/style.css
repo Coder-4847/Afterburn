@@ -250,3 +250,10 @@ body.reduce-motion * { transition-duration: 0.01s !important; }
 body.hi-contrast .hud { color: #fff; text-shadow: 0 0 2px #000, 0 0 4px #000, 0 0 7px #000; }
 body.hi-contrast .wpn, body.hi-contrast .hud-match, body.hi-contrast .feed-line, body.hi-contrast .hud-score { background: rgba(0, 0, 0, 0.72); }
 body.hi-contrast .ro-lbl, body.hi-contrast .ro-unit, body.hi-contrast .ro-sub, body.hi-contrast .ro-stats { color: rgba(255, 255, 255, 0.92); }
+
+.hud-brief { position: absolute; left: 50%; top: 124px; transform: translateX(-50%); width: min(560px, calc(100vw - 48px)); z-index: 0; pointer-events: none; display: flex; flex-direction: column; gap: 6px; text-align: center; padding: 12px 18px; background: rgba(6, 10, 14, 0.62); border: 1px solid rgba(232, 242, 247, 0.2); border-radius: 3px; opacity: 0; transition: opacity 0.4s; font-family: var(--sans); }
+.hud-brief b { color: var(--accent); letter-spacing: 0.24em; font-size: 12px; }
+.hud-brief span { font-size: 13px; line-height: 1.4; }
+.hud-brief i { font-style: normal; font-family: var(--mono); font-size: 11px; color: rgba(232, 242, 247, 0.7); line-height: 1.6; }
+
+.hud .warns { z-index: 2; }
