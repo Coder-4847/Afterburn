@@ -124,7 +124,7 @@ Terrain is generated per map from a seed (`src/world/generators`: `archipelago`,
 
 ## Game modes, AI pilots and the minimap
 
-**Mission setup** (the start screen) has three modes, three maps, and per-mode options:
+**Mission setup** (the start screen) has five modes, three maps, and per-mode options:
 
 - **Team Deathmatch**: you and AI wingmen (Blue) against an AI team (Red), 1v1, 2v2, 3v3, 5v5 or 10v10. Pick a score limit (10 to 50
   kills), a time limit (none, 5, 10 or 15 minutes) and the AI skill. Only kills against the other team score (crashes do not).
@@ -138,6 +138,15 @@ Terrain is generated per map from a seed (`src/world/generators`: `archipelago`,
   keeps the life, 50% the pilot is lost and it costs a life like any other kill. If you have landed and are stopped (or nearly), ejecting
   always works and the life is kept. Ejecting from a falling wreck can also win a spent life back. AI pilots never eject.
   There is an optional time limit: when it runs out, the team with more pilots left wins, then the team with more lives left.
+- **Carrier Strike** (maps with open sea: Coral Archipelago): each team has one **carrier** (a 400 m anchored flight deck) with two
+  **destroyers** (guns and surface-to-air missiles) and two **submarines** (surfaced, with missiles) steaming round it. Sink the other
+  carrier before yours is sunk. You have **infinite lives** and choose where each sortie starts, from the **carrier deck** (full
+  throttle and the catapult flings you off the bow) or **in the air** over your fleet (press **1** or **2** on the respawn screen). Land
+  on your own deck (gear down, throttle closed: the arrestor wire stops you in about 100 m) and stop to rearm and repair, the same
+  10 / 20 seconds as on a runway. Select bombs (**4**) or rockets (**3**) and cycle to a ship with **Tab**; a bomb does about a
+  ninth of a carrier, escorts take one or two. Some AI pilots on each side carry bombs and fly strike runs on your carrier, so you
+  also have to defend. The score line shows each carrier's remaining integrity plus the range and bearing to the enemy carrier; when
+  the clock runs out the carrier in better shape wins. On maps with no usable sea the mode runs as Team Deathmatch.
 - **Training Range**: target balloons dead ahead, a ground-target site and three Red drones that evade (or, set to *Hostile*, hunt you).
 - **Free Flight**: an empty sky for practising takeoffs, landings and aerobatics.
 
@@ -147,8 +156,8 @@ beam the missile and use flares or chaff when one is inbound, avoid mountains by
 hurt, low on fuel or out of weapons. Skill (**Rookie / Regular / Ace**) sets reaction time, aim error, gun and missile range, how often
 they fire and how well they use countermeasures. They share targets so a team spreads out instead of piling onto one jet.
 
-**Rearm and repair:** stop on a friendly (Blue) runway or apron for three seconds with the gear down to be repaired, refuelled and rearmed.
-AI pilots do this on a low pass over their own strip.
+**Rearm and repair:** stop on a friendly (Blue) runway or carrier deck (ten seconds to rearm, twenty to repair; you cannot be hurt while
+the crew works). AI pilots do this on a low pass over their own strip or carrier.
 
 **Minimap:** a heading-up radar in the top-left shows terrain, airstrips and aircraft (enemies only inside a 16 km detection radius;
 your selected target is circled; inbound missiles flash). **M** opens the whole map, north-up. The minimap can be switched off in

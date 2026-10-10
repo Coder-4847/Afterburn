@@ -10,6 +10,7 @@ export interface MenuCallbacks {
   resume(): void;
   respawnAir(): void;
   respawnRunway(): void;
+  respawnCarrier(): void;
   hangar(): void;
   /** Back to the mission setup screen from the pause menu. */
   setup(): void;
@@ -38,6 +39,7 @@ const BIND_GROUPS: { title: string; rows: Action[] }[] = [
 const MODES: { id: Settings['sortie']; name: string; desc: string }[] = [
   { id: 'tdm', name: 'Team Deathmatch', desc: 'You and AI wingmen against an AI team, from 1v1 up to 10v10. First team to the score limit wins.' },
   { id: 'elimination', name: 'Last Stand', desc: 'Everyone has three lives and a spawn is a life. Ejecting can save yours. The first team to wipe out the other wins.' },
+  { id: 'carrier', name: 'Carrier Strike', desc: 'Infinite lives. Launch from your carrier deck or the air and sink the enemy carrier, screened by destroyers and submarines with guns and missiles.' },
   { id: 'training', name: 'Training Range', desc: 'Target balloons, ground targets and Red drones that evade (or fight back). No score, no pressure.' },
   { id: 'freeflight', name: 'Free Flight', desc: 'An empty sky. Fly, land, practise, look around.' },
 ];
@@ -146,13 +148,15 @@ export class Menus {
     });
     el('p', 'hint-line', p, map.description);
 
-    if (s.sortie === 'tdm' || s.sortie === 'elimination') {
+    if (s.sortie === 'tdm' || s.sortie === 'elimination' || s.sortie === 'carrier') {
       el('div', 'section', p, 'Match');
+      if (s.sortie === 'carrier' && (map.groundPlane || map.terrain.kind === 'alpine')) el('p', 'hint-line warn', p, 'This map has no open sea: Carrier Strike will fall back to Team Deathmatch here. Pick a map with water.');
+      if (s.sortie === 'carrier') this.select(p, 'Launch from', 'carrierSpawn', [['deck', 'Your carrier deck (catapult)'], ['air', 'In the air over your carrier']], undefined, 'Applies to every respawn. Press 1 (air) or 2 (carrier) on the respawn screen to change it');
       this.select(p, 'Team size', 'teamSize', [1, 2, 3, 5, 10].map((n) => [String(n), `${n} v ${n}`]), undefined, 'You count as one of your side; the rest are AI wingmen');
       if (s.sortie === 'tdm') this.select(p, 'Score limit', 'scoreLimit', [10, 20, 30, 50].map((n) => [String(n), `${n} kills`]));
       this.select(
         p, 'Time limit', 'timeLimit', [[0, 'None'], [5, '5 minutes'], [10, '10 minutes'], [15, '15 minutes']].map(([n, t]) => [String(n), String(t)]), undefined,
-        s.sortie === 'elimination' ? 'When it runs out: more pilots left wins, then more lives' : undefined,
+        s.sortie === 'elimination' ? 'When it runs out: more pilots left wins, then more lives' : s.sortie === 'carrier' ? 'When it runs out: the carrier in better shape wins' : undefined,
       );
       this.select(p, 'AI skill', 'aiSkill', Object.entries(SKILLS).map(([id, k]) => [id, k.label]), undefined, 'Reaction time, aim, countermeasure use');
     } else if (s.sortie === 'training') {
@@ -197,6 +201,7 @@ export class Menus {
     };
     mk('RESUME', '', () => this.cb.resume(), true);
     mk('Respawn in the air', 'Restart at cruise speed over your side of the map', () => this.cb.respawnAir());
+    if (s.sortie === 'carrier') mk('Launch from your carrier', 'Catapult launch: throttle up and hold the brakes off', () => this.cb.respawnCarrier());
     mk('Start on the runway', 'Takeoff practice: throttle up, hold Space, pull up at ~270 km/h', () => this.cb.respawnRunway());
     mk('Mission setup', 'Change mode, map or team size (leaves the current match)', () => this.cb.setup());
     mk('Hangar', `Now flying: ${this.cb.aircraftName()}. Changing aircraft respawns you.`, () => this.cb.hangar());

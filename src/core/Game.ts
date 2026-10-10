@@ -1,6 +1,7 @@
 import { Vector3 } from 'three';
 import { TrainingRange } from '../ai/Range';
 import { Skirmish } from '../ai/Skirmish';
+import { Fleet } from '../naval/Fleet';
 import { Aircraft } from '../aircraft/Aircraft';
 import { GameAudio } from '../audio/Audio';
 import { Music } from '../audio/Music';
@@ -35,7 +36,7 @@ import { Menus } from '../ui/Menus';
 import { World } from '../world/World';
 import { clamp, DEG, smoothstep, yieldToMain } from './math';
 import { Input } from './Input';
-import { SettingsStore, type QualityLevel, type Settings } from './Settings';
+import { SettingsStore, type QualityLevel, type Settings, type SortieMode } from './Settings';
 
 type GameState = 'loading' | 'ready' | 'playing' | 'paused' | 'hangar' | 'results';
 
@@ -82,6 +83,7 @@ export class Game {
   private fighter!: Fighter;
   private range!: TrainingRange;
   private skirmish: Skirmish | null = null;
+  private fleet: Fleet | null = null;
   private match: Match | null = null;
   private music = new Music(this.audio);
   private scoreboard!: ScoreboardOverlay;
@@ -161,6 +163,7 @@ export class Game {
       resume: () => void this.resume(),
       respawnAir: () => { this.spawnAir(); void this.resume(); },
       respawnRunway: () => { this.spawnRunway(); void this.resume(); },
+      respawnCarrier: () => { this.spawnCarrier(); void this.resume(); },
       hangar: () => this.openHangar(),
       setup: () => { this.builtSig = ''; this.state = 'ready'; this.menus.showReady(); },
       rematch: () => { this.builtSig = ''; void this.rebuild(); },
@@ -247,6 +250,8 @@ export class Game {
     this.range?.clear();
     this.skirmish?.clear();
     this.skirmish = null;
+    this.fleet?.clear();
+    this.fleet = null;
     for (const f of [...this.combat.fighters]) f.aircraft.dispose();
     this.player?.dispose();
     this.combat.dispose();
@@ -279,13 +284,32 @@ export class Game {
     this.match = null;
     this.setAircraft(s.aircraftId, true);
     this.fighter.stats = { kills: 0, assists: 0, deaths: 0, shots: 0, hits: 0, damage: 0 };
-    if (s.sortie === 'training') this.range.build(s.drones === 'hostile', this.world.map);
-    else if (s.sortie === 'tdm' || s.sortie === 'elimination') {
+    this.briefNote = '';
+    let mode = s.sortie;
+    if (mode === 'carrier') {
+      const fleet = new Fleet(this.combat, this.world, this.world.map, s.aiSkill);
+      if (fleet.build()) this.fleet = fleet;
+      else {
+        fleet.clear();
+        mode = 'tdm';
+        this.briefNote = 'This map has no open sea for a carrier group, so this is Team Deathmatch.';
+      }
+    }
+    this.mode = mode;
+    if (mode === 'training') this.range.build(s.drones === 'hostile', this.world.map);
+    else if (mode === 'tdm' || mode === 'elimination' || mode === 'carrier') {
       this.skirmish = new Skirmish(this.combat, this.world.scene, this.smoke, this.world.map, s.aiSkill);
+      this.skirmish.setFleet(this.fleet);
       this.skirmish.build(s.teamSize - 1, s.teamSize);
-      const lives = s.sortie === 'elimination' ? LIVES : 0;
-      this.match = new Match({ scoreLimit: s.scoreLimit, timeLimit: s.timeLimit * 60, teamSize: s.teamSize, lives });
+      const lives = mode === 'elimination' ? LIVES : 0;
+      this.match = new Match({ scoreLimit: s.scoreLimit, timeLimit: s.timeLimit * 60, teamSize: s.teamSize, lives, strike: mode === 'carrier' });
       if (lives) for (const f of this.combat.fighters) f.lives = lives;
+      if (mode === 'carrier') {
+        this.match.setCarriers(1, 1);
+        this.carrierWarn = 1;
+        this.endTimer = 0;
+        this.respawn();
+      }
     }
     this.spectating = false;
     this.ejected = null;
@@ -458,7 +482,7 @@ export class Game {
     this.combat.addFighter(this.fighter);
     this.buildHudModules();
     this.trails?.reset();
-    this.spawnAir();
+    this.respawn();
   }
 
   /** Copy the difficulty's player assists onto the player's fighter. */
@@ -559,6 +583,15 @@ export class Game {
   private spawnPoint(): { x: number; z: number; heading: number; altitude: number; speed: number } {
     const map = this.world.map;
     const sp = map.spawn;
+    const own = this.fleet?.carriers.blue;
+    const foe = this.fleet?.carriers.red;
+    if (own && foe) {
+      // above the carrier group, pointed at the enemy
+      const dx = foe.pos.x - own.pos.x;
+      const dz = foe.pos.z - own.pos.z;
+      const len = Math.hypot(dx, dz) || 1;
+      return { x: own.pos.x + (dx / len) * 500, z: own.pos.z + (dz / len) * 500, heading: Math.atan2(dx, -dz) / DEG, altitude: 450, speed: sp.speed };
+    }
     if (this.skirmish) {
       const strip = map.airstrips.find((a) => a.team === 'blue');
       if (strip) {
@@ -589,6 +622,31 @@ export class Game {
     f.reset(_tmp, m.heading * DEG, m.speed, false, 0.75);
     c.throttle = 0.75;
     c.gearDown = false;
+    c.afterburner = false;
+    c.airbrake = false;
+    this.afterSpawn();
+  }
+
+  /** Respawn the way the player chose: from the carrier's deck (if it still has one), else in the air. */
+  private respawn(): void {
+    if (this.fleet && this.settings.value.carrierSpawn === 'deck' && this.fleet.deckSpawn('blue')) this.spawnCarrier();
+    else this.spawnAir();
+  }
+
+  /** On the carrier's stern, nose to the bow, throttle closed: open it fully and the catapult does the rest. */
+  spawnCarrier(): void {
+    const d = this.fleet?.deckSpawn('blue');
+    if (!d) {
+      this.spawnAir();
+      return;
+    }
+    const f = this.player.flight;
+    const c = this.player.controls;
+    _tmp.set(d.x, d.y + f.def.flight.gearHeight, d.z);
+    f.reset(_tmp, d.heading, 0, true, 0);
+    f.grounded = true;
+    c.throttle = 0;
+    c.gearDown = true;
     c.afterburner = false;
     c.airbrake = false;
     this.afterSpawn();
@@ -959,9 +1017,22 @@ export class Game {
     }
 
     this.autoCountermeasures(dt);
+    this.fleet?.update(dt);
     this.combat.update(dt);
     this.range.update();
     this.skirmish?.update();
+    if (this.match?.cfg.strike && this.fleet) {
+      const bc = this.fleet.carriers.blue;
+      const rc = this.fleet.carriers.red;
+      const bf = bc ? bc.healthFraction : 0;
+      this.match.setCarriers(bf, rc ? rc.healthFraction : 0);
+      // tell the player when their carrier is taking a beating
+      if (bf < this.carrierWarn - 0.08 && bf > 0 && this.state === 'playing') {
+        this.say(`YOUR CARRIER IS UNDER ATTACK  ·  ${Math.ceil(bf * 100)}%`, 3);
+        this.audio.beep(520, 0.2, 0.25);
+      }
+      this.carrierWarn = Math.min(this.carrierWarn, bf + 0.08);
+    }
     if (this.match) {
       if (this.match.cfg.lives) {
         let b = 0;
@@ -982,7 +1053,15 @@ export class Game {
         this.match.setRemaining(b, r, bl, rl);
       }
       if (!this.match.over) this.match.update(dt);
-      if (this.match.over && this.state !== 'results') this.endMatch();
+      if (this.match.over && this.state !== 'results') {
+        // a sunk carrier gets a few seconds to go down before the results screen
+        if (this.match.cfg.strike && this.endTimer < 5) {
+          if (this.endTimer === 0) this.say(this.match.winner === 'blue' ? 'ENEMY CARRIER DESTROYED' : this.match.winner === 'red' ? 'YOUR CARRIER IS LOST' : 'BOTH CARRIERS LOST', 4);
+          this.endTimer += dt || 0.0001;
+          if (this.endTimer < 4.5) return;
+        }
+        this.endMatch();
+      }
     }
   }
 
@@ -1045,18 +1124,31 @@ export class Game {
       return;
     }
     const note = this.livesNote();
-    this.menus.updateCrash(`${note ? note + '  ·  ' : ''}Respawning in ${Math.max(0, Math.ceil(this.crashTimer))}`);
+    let pick = '';
+    if (this.fleet) {
+      // carrier strike: choose where the next sortie starts
+      if (this.input.pressed('weapon1')) this.settings.set('carrierSpawn', 'air');
+      if (this.input.pressed('weapon2')) this.settings.set('carrierSpawn', 'deck');
+      const deck = this.settings.value.carrierSpawn === 'deck' && !!this.fleet.deckSpawn('blue');
+      pick = `  ·  1 air  ·  2 carrier  (next: ${deck ? 'CARRIER' : 'AIR'})`;
+    }
+    this.menus.updateCrash(`${note ? note + '  ·  ' : ''}Respawning in ${Math.max(0, Math.ceil(this.crashTimer))}${pick}`);
     if (this.crashTimer <= 0) {
       if (this.match?.cfg.lives && this.fighter.lives <= 0) this.enterSpectate();
       else {
         this.ejected = null;
-        this.spawnAir();
+        this.respawn();
       }
     }
   }
 
   // ---- spectating (out of lives) -------------------------------------------------------------
 
+  /** What is actually being played (a carrier sortie on a map with no sea runs as team deathmatch). */
+  private mode: SortieMode = 'training';
+  private carrierWarn = 1;
+  private endTimer = 0;
+  private briefNote = '';
   private spectating = false;
   private specIndex = 0;
   private specCurrent: Aircraft | null = null;
@@ -1139,8 +1231,8 @@ export class Game {
     const stopped = f.grounded && f.speed < 6;
     const surf = this.world.surfaceAt(f.pos.x, f.pos.z, _surf);
     const near = this.world.nearestAirstrip(f.pos.x, f.pos.z);
-    // service needs the aircraft stopped ON a friendly runway (the apron and open ground do not count)
-    const onStrip = stopped && surf.onRunway && near.def.team === 'blue';
+    // service needs the aircraft stopped ON a friendly runway or carrier deck (the apron and open ground do not count)
+    const onStrip = stopped && surf.onRunway && (surf.onDeck ? surf.deckTeam === 'blue' : near.def.team === 'blue');
     this.serviceInfo = null;
     if (!onStrip || !fg.needsService()) {
       this.serviceTimer = 0;
@@ -1149,7 +1241,7 @@ export class Game {
         this.serviceHint -= dt;
         if (this.serviceHint <= 0) {
           this.serviceHint = 6;
-          this.say(surf.onApron && !surf.onRunway ? 'MOVE ONTO THE RUNWAY TO BE SERVICED' : 'STOP ON A BLUE RUNWAY TO REARM AND REPAIR', 2.5);
+          this.say(surf.onDeck ? 'THIS IS THE ENEMY CARRIER' : surf.onApron && !surf.onRunway ? 'MOVE ONTO THE RUNWAY TO BE SERVICED' : this.fleet ? 'STOP ON YOUR CARRIER DECK OR A BLUE RUNWAY TO REARM AND REPAIR' : 'STOP ON A BLUE RUNWAY TO REARM AND REPAIR', 2.5);
         }
       }
       return;
@@ -1247,9 +1339,9 @@ export class Game {
     const fighters = this.combat.fighters;
     const sum = (team: 'blue' | 'red') => fighters.filter((f) => f.team === team).reduce((n, f) => n + f.stats.kills, 0);
     return {
-      title: s.sortie === 'training' ? 'TRAINING RANGE' : s.sortie === 'freeflight' ? 'FREE FLIGHT' : s.sortie === 'elimination' ? 'LAST STAND' : 'TEAM DEATHMATCH',
+      title: this.mode === 'training' ? 'TRAINING RANGE' : this.mode === 'freeflight' ? 'FREE FLIGHT' : this.mode === 'elimination' ? 'LAST STAND' : this.mode === 'carrier' ? 'CARRIER STRIKE' : 'TEAM DEATHMATCH',
       score: m ? m.score : { blue: sum('blue'), red: sum('red') },
-      info: m ? (m.cfg.lives ? `PILOTS LEFT   ·   3 LIVES EACH${m.remaining !== null ? '   ·   ' + formatClock(m.remaining) : ''}` : `FIRST TO ${m.cfg.scoreLimit}${m.remaining !== null ? '   ·   ' + formatClock(m.remaining) : ''}`) : '',
+      info: m ? (m.cfg.strike ? `CARRIER INTEGRITY   ·   BLUE ${m.score.blue}%   RED ${m.score.red}%${m.remaining !== null ? '   ·   ' + formatClock(m.remaining) : ''}` : m.cfg.lives ? `PILOTS LEFT   ·   3 LIVES EACH${m.remaining !== null ? '   ·   ' + formatClock(m.remaining) : ''}` : `FIRST TO ${m.cfg.scoreLimit}${m.remaining !== null ? '   ·   ' + formatClock(m.remaining) : ''}`) : '',
       rows: fighters.map((f) => ({
         name: f.isPlayer ? 'You' : f.name,
         aircraft: f.aircraft.def.name,
@@ -1278,7 +1370,8 @@ export class Game {
     this.menus.hideCrash();
     this.hud.setVisible(false);
     const outcome = m.winner === 'draw' ? 'draw' : m.winner === 'blue' ? 'win' : 'loss';
-    this.menus.showResults({ outcome, reason: `${m.reason}  ·  ${m.score.blue} to ${m.score.red}`, data: this.scoreData() });
+    const reason = m.cfg.strike ? `${m.reason}  ·  Blue carrier ${m.score.blue}%  ·  Red carrier ${m.score.red}%` : `${m.reason}  ·  ${m.score.blue} to ${m.score.red}`;
+    this.menus.showResults({ outcome, reason, data: this.scoreData() });
   }
 
   /** Top-of-screen score line for team deathmatch. */
@@ -1291,20 +1384,24 @@ export class Game {
     const keys = (a: Parameters<Input['codes']>[0]) => this.input.codes(a).map(codeLabel).join('/');
     let title: string;
     let goal: string;
-    if (s.sortie === 'elimination') {
+    if (this.mode === 'carrier') {
+      title = 'CARRIER STRIKE';
+      goal = `Sink the RED carrier before they sink yours. Lives are unlimited. Launch from your deck (full throttle, the catapult flings you off) or from the air; on the respawn screen press 1 for air, 2 for carrier. Select bombs (${keys('weapon4')}) or rockets (${keys('weapon3')}), then ${keys('cycleTarget')} to pick a ship. Destroyers and submarines screen the carrier with guns and missiles: come in fast and low, throw flares, and leave. Land on your own deck (gear down, close the throttle: the wire catches you) to rearm and repair${s.timeLimit ? '. When ' + s.timeLimit + ' minutes are up, the carrier in better shape wins' : ''}.`;
+    } else if (this.mode === 'elimination') {
       title = 'LAST STAND';
       goal = `Three lives each. Destroy every pilot on the RED team before they do the same to you${s.timeLimit ? ' (or have more pilots left when ' + s.timeLimit + ' minutes are up)' : ''}. Ejecting (hold ${keys('eject')}) on the ground always saves the life; in the air it is 50/50.`;
-    } else if (s.sortie === 'tdm') {
+    } else if (this.mode === 'tdm') {
       title = 'TEAM DEATHMATCH';
       goal = `Shoot down the RED team. First side to ${s.scoreLimit} kills wins${s.timeLimit ? ' (or most kills in ' + s.timeLimit + ' min)' : ''}.`;
-    } else if (s.sortie === 'training') {
+    } else if (this.mode === 'training') {
       title = 'TRAINING RANGE';
       goal = 'Balloons dead ahead, a ground-target site and three Red drones. Nothing here is trying to kill you unless you set the drones to hostile.';
     } else {
       title = 'FREE FLIGHT';
       goal = 'An empty sky. Lower the gear (' + keys('gear') + ') and land on a runway to practise.';
     }
-    const find = s.sortie === 'tdm' || s.sortie === 'elimination' ? 'Red markers on the HUD and the minimap show where the enemy is. The arrow at the screen edge points to the nearest one.' : 'Red markers show enemy aircraft; the minimap (top left) shows everything nearby.';
+    if (this.briefNote) goal = this.briefNote + ' ' + goal;
+    const find = this.mode === 'carrier' ? 'The Red carrier and its escorts are the red squares on the minimap; the line at the top of the screen gives its range and bearing. Enemy fighters are red markers.' : this.mode === 'tdm' || this.mode === 'elimination' ? 'Red markers on the HUD and the minimap show where the enemy is. The arrow at the screen edge points to the nearest one.' : 'Red markers show enemy aircraft; the minimap (top left) shows everything nearby.';
     this.briefEl.innerHTML =
       `<b>${title}</b><span>${goal}</span><span>${find}</span>` +
       `<i>${keys('cycleTarget')} pick a target  ·  hold ${keys('fireGun')} cannon  ·  ${keys('fireMissile')} fire missile (let the ring fill first)  ·  ${keys('flares')} flares  ${keys('chaff')} chaff  ·  ${keys('map')} map</i>`;
@@ -1343,10 +1440,25 @@ export class Game {
       return;
     }
     const rem = m.remaining;
-    const text = `${m.score.blue}|${rem === null ? 'x' : formatClock(rem)}|${m.score.red}|${this.fighter.lives}`;
+    let target = '';
+    if (m.cfg.strike) {
+      const rc = this.fleet?.carriers.red;
+      if (rc && rc.alive) {
+        const p = this.player.flight.pos;
+        const dx = rc.pos.x - p.x;
+        const dz = rc.pos.z - p.z;
+        const brg = Math.round(((Math.atan2(dx, -dz) / DEG) % 360 + 360) % 360) % 360;
+        target = `RED CARRIER  ${(Math.hypot(dx, dz) / 1000).toFixed(1)} KM  ·  BRG ${String(brg).padStart(3, '0')}`;
+      }
+    }
+    const text = `${m.score.blue}|${rem === null ? 'x' : formatClock(rem)}|${m.score.red}|${this.fighter.lives}|${target}`;
     this.matchEl.style.display = '';
     if (text === this.matchText) return;
     this.matchText = text;
+    if (m.cfg.strike) {
+      this.matchEl.innerHTML = `<span class="b">${m.score.blue}%</span><span class="t">${rem === null ? '∞' : formatClock(rem)}</span><span class="r">${m.score.red}%</span><span class="lim">CARRIER INTEGRITY${target ? '   ·   ' + target : ''}</span>`;
+      return;
+    }
     if (m.cfg.lives) {
       const l = Math.max(0, this.fighter.lives);
       this.matchEl.innerHTML = `<span class="b">${m.score.blue}</span><span class="t">${rem === null ? '∞' : formatClock(rem)}</span><span class="r">${m.score.red}</span><span class="lim">PILOTS LEFT   ·   YOUR LIVES ${'♥'.repeat(l)}${'♡'.repeat(Math.max(0, LIVES - l))}</span>`;
@@ -1676,7 +1788,7 @@ export class Game {
     const fwd = new Vector3();
     return {
       player: this.player, world: this.world, rig: this.rig, input: this.input, aim: this.aim,
-      tuning: { AIM, FLIGHT }, combat: this.combat, fighter: this.fighter, range: this.range, skirmish: this.skirmish, audio: this.audio,
+      tuning: { AIM, FLIGHT }, combat: this.combat, fighter: this.fighter, range: this.range, skirmish: this.skirmish, fleet: this.fleet, match: this.match, audio: this.audio,
       /** Open the hangar on an aircraft with a fixed camera (for screenshots). */
       hangarView: async (id: string, yaw = 0.9, pitch = 0.25, ab = false, gear = true, panels = false, wait = 1300) => {
         if (this.state !== 'hangar') this.openHangar();

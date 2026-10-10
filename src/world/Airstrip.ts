@@ -95,7 +95,8 @@ export class Airstrip {
   private cos: number;
   private sin: number;
 
-  constructor(readonly def: AirstripDef) {
+  /** @param groundAt terrain height at a world point (used to keep the lights on land). */
+  constructor(readonly def: AirstripDef, private groundAt?: (x: number, z: number) => number, private seaLevel = 0) {
     // local +X -> world (sin h, -cos h)
     this.cos = Math.sin(def.heading * DEG);
     this.sin = -Math.cos(def.heading * DEG);
@@ -196,27 +197,40 @@ export class Airstrip {
     const amber = new Color(0xffb030).multiplyScalar(2.0);
     const hx = d.length / 2;
     const hz = d.width / 2 + 1.5;
+    // runway-local (u along, v across) -> where the lamp really is: height above the strip, or null over water
+    const lampY = (u: number, v: number): number | null => {
+      if (!this.groundAt) return 0.5;
+      const x = d.x + u * this.cos - v * this.sin;
+      const z = d.z + u * this.sin + v * this.cos;
+      const h = this.groundAt(x, z);
+      if (h <= this.seaLevel + 0.25) return null;
+      return h - d.elevation + 0.5;
+    };
+    const add = (u: number, v: number, c: Color, lift = 0): boolean => {
+      const y = lampY(u, v);
+      if (y === null) return false;
+      spots.push({ p: new Vector3(u, y + lift, v), c });
+      return true;
+    };
     for (let u = -hx; u <= hx + 0.1; u += 50) {
-      spots.push({ p: new Vector3(u, 0.5, -hz), c: u > hx - 300 ? amber : white });
-      spots.push({ p: new Vector3(u, 0.5, hz), c: u > hx - 300 ? amber : white });
+      add(u, -hz, u > hx - 300 ? amber : white);
+      add(u, hz, u > hx - 300 ? amber : white);
     }
     for (let k = -6; k <= 6; k++) {
-      spots.push({ p: new Vector3(-hx - 2, 0.5, k * 3.6), c: green });
-      spots.push({ p: new Vector3(hx + 2, 0.5, k * 3.6), c: red });
+      add(-hx - 2, k * 3.6, green);
+      add(hx + 2, k * 3.6, red);
     }
-    // approach lights (both ends), centre line plus cross bars
-    for (let k = 1; k <= 24; k++) {
-      const off = 30 * k;
-      spots.push({ p: new Vector3(-hx - 8 - off, 0.6, 0), c: white });
-      spots.push({ p: new Vector3(hx + 8 + off, 0.6, 0), c: white });
-      if (k % 4 === 0) {
-        for (let s = -3; s <= 3; s++) {
-          if (s === 0) continue;
-          spots.push({ p: new Vector3(-hx - 8 - off, 0.6, s * 4), c: white });
-          spots.push({ p: new Vector3(hx + 8 + off, 0.6, s * 4), c: white });
+    // approach lights (both ends), centre line plus cross bars: each string stops at the first lamp that would stand in the sea
+    for (const end of [-1, 1]) {
+      for (let k = 1; k <= 24; k++) {
+        const u = end * (hx + 8 + 30 * k);
+        if (!add(u, 0, white, 0.1)) break;
+        if (k % 4 === 0) {
+          for (let s = -3; s <= 3; s++) if (s !== 0) add(u, s * 4, white, 0.1);
         }
       }
     }
+    if (spots.length === 0) return;
     const mesh = new InstancedMesh(new BoxGeometry(0.9, 0.5, 0.9), new MeshBasicMaterial({ color: 0xffffff, toneMapped: false }), spots.length);
     const m = new Matrix4();
     const q = new Quaternion();

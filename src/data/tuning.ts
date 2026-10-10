@@ -40,7 +40,7 @@ export const FLIGHT = {
   /** Induced drag at max lift, as a multiple of parasitic drag. Bleeds energy in hard turns. */
   inducedDrag: 5,
   gearDrag: 0.55,
-  airbrakeDrag: 1.6,
+  airbrakeDrag: 4.2,
 
   // --- engine ---------------------------------------------------------------------------
   idleThrust: 0.06,
@@ -52,8 +52,10 @@ export const FLIGHT = {
   gearTime: 2.2,
 
   // --- ground ---------------------------------------------------------------------------
-  rollingFriction: 0.05,
-  brakeFriction: 0.85,
+  rollingFriction: 0.06,
+  /** Throttle closed on the ground: engine drag and light brake drag, in g, so a rollout always ends inside a runway. */
+  idleRollFriction: 0.3,
+  brakeFriction: 1.6,
   groundSteer: 0.55, // rad/s of nosewheel steering
   maxRotatePitch: 15 * Math.PI / 180,
   runwayMargin: 14, // extra metres beyond the painted runway that still count as "on the runway"

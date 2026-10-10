@@ -24,6 +24,21 @@ const _loc = { u: 0, v: 0 };
 
 export const TERRAIN_RES = 1025;
 
+export interface Deck {
+  x: number;
+  z: number;
+  /** Direction cosines of the deck's long axis in world x/z. */
+  dx: number;
+  dz: number;
+  halfLength: number;
+  halfWidth: number;
+  /** Surface height above the world origin. */
+  height: number;
+  team: 'blue' | 'red';
+  /** A sunk carrier has no deck. */
+  active: boolean;
+}
+
 export class World implements FlightEnv {
   readonly scene = new Scene();
   readonly sun = new DirectionalLight(0xffffff, 3);
@@ -41,6 +56,8 @@ export class World implements FlightEnv {
   fogToneMapped = true;
   /** Extra fog density from being inside a cloud. */
   private cloudFog = 0;
+  /** Carrier flight decks: flat surfaces above the sea that act as runways. */
+  readonly decks: Deck[] = [];
   /** Flat ground that fills the world beyond the terrain on maps with no sea. */
   private ground: Mesh | null = null;
 
@@ -69,7 +86,7 @@ export class World implements FlightEnv {
       scene.add(g);
     }
     for (const a of map.airstrips) {
-      const s = new Airstrip(a);
+      const s = new Airstrip(a, (x, z) => heightmap.sample(x, z), map.seaLevel);
       this.airstrips.push(s);
       scene.add(s.group);
     }
@@ -185,11 +202,29 @@ export class World implements FlightEnv {
     out.height = h > this.map.seaLevel ? h : this.map.seaLevel;
     out.onRunway = false;
     out.onApron = false;
+    out.onDeck = false;
+    out.deckTeam = undefined;
     for (let i = 0; i < this.airstrips.length; i++) {
       const a = this.airstrips[i];
       a.local(x, z, _loc);
       if (a.isOnRunway(_loc.u, _loc.v)) { out.onRunway = true; out.onApron = true; break; }
       if (a.isOnApron(_loc.u, _loc.v)) out.onApron = true;
+    }
+    for (let i = 0; i < this.decks.length; i++) {
+      const d = this.decks[i];
+      if (!d.active) continue;
+      const ox = x - d.x;
+      const oz = z - d.z;
+      const u = ox * d.dx + oz * d.dz;
+      const v = -ox * d.dz + oz * d.dx;
+      if (Math.abs(u) <= d.halfLength && Math.abs(v) <= d.halfWidth) {
+        out.height = d.height;
+        out.onRunway = true;
+        out.onApron = true;
+        out.onDeck = true;
+        out.deckTeam = d.team;
+        break;
+      }
     }
     return out;
   }

@@ -11,7 +11,7 @@ import { BULLET_LIFE, GRAVITY, STORES, type BombDef, type MissileDef, type PodDe
 import type { ParticleSystem } from '../render/Particles';
 import type { SurfaceInfo } from '../flight/FlightModel';
 import type { Fighter, FighterHooks } from './Fighter';
-import { AirDummy, GroundTarget, SimpleTarget } from './Targets';
+import { AirDummy, SimpleTarget } from './Targets';
 import type { Attacker, CombatEvent, SegHit, Target, Team } from './types';
 import { GROUPS } from './WeaponSystem';
 
@@ -47,7 +47,7 @@ const FWD = new Vector3(0, 0, -1);
 interface Missile {
   id: number;
   def: MissileDef;
-  owner: Fighter;
+  owner: Attacker;
   target: Target | null;
   decoy: Decoy | null;
   pos: Vector3;
@@ -71,7 +71,7 @@ interface Rocket {
   vel: Vector3;
   age: number;
   def: PodDef;
-  owner: Fighter;
+  owner: Attacker;
   alive: boolean;
   trailAcc: number;
 }
@@ -81,7 +81,7 @@ interface Bomb {
   prev: Vector3;
   vel: Vector3;
   def: BombDef;
-  owner: Fighter;
+  owner: Attacker;
   target: Target | null;
   mesh: Group;
   alive: boolean;
@@ -119,7 +119,7 @@ let missileIds = 1;
  */
 export class Combat implements FighterHooks {
   readonly fighters: Fighter[] = [];
-  readonly ground: GroundTarget[] = [];
+  readonly ground: (SimpleTarget & { mesh: Group })[] = [];
   readonly dummies: AirDummy[] = [];
   readonly events = new Emitter<CombatEvent>();
   audio: CombatAudio = NULL_AUDIO;
@@ -139,7 +139,7 @@ export class Combat implements FighterHooks {
   private bAge = new Float32Array(MAX_BULLETS).fill(99);
   private bDmg = new Float32Array(MAX_BULLETS);
   private bTracer = new Uint8Array(MAX_BULLETS);
-  private bOwner: (Fighter | null)[] = new Array(MAX_BULLETS).fill(null);
+  private bOwner: (Attacker | null)[] = new Array(MAX_BULLETS).fill(null);
   private bHead = 0;
   private bHigh = 0;
   private tracerGeo: BufferGeometry;
@@ -198,10 +198,22 @@ export class Combat implements FighterHooks {
     f.hooks = null;
   }
 
-  addGround(t: GroundTarget): void {
+  addGround(t: SimpleTarget & { mesh: Group }): void {
     this.ground.push(t);
     this.root.add(t.mesh);
     t.onKilled = (tt, k, w) => this.simpleKilled(tt, k, w);
+  }
+
+  removeGroundTarget(t: SimpleTarget & { mesh: Group }): void {
+    const i = this.ground.indexOf(t);
+    if (i >= 0) this.ground.splice(i, 1);
+    this.root.remove(t.mesh);
+    t.mesh.traverse((o) => {
+      const m = o as Mesh;
+      m.geometry?.dispose();
+      const mat = m.material;
+      if (mat) (Array.isArray(mat) ? mat : [mat]).forEach((x) => x.dispose());
+    });
   }
 
   addDummy(t: AirDummy): void {
@@ -301,6 +313,34 @@ export class Combat implements FighterHooks {
     const L = f.aircraft.def.model.length;
     out.set(0.5, 0.15, -L * 0.3).applyQuaternion(f.aircraft.flight.quat).add(f.aircraft.flight.pos);
     return out;
+  }
+
+  /** One round from a ship's gun (or any non-fighter shooter). */
+  fireRound(owner: Attacker, pos: Vector3, vel: Vector3, damage: number, tracer = true): void {
+    const idx = this.bHead;
+    this.bHead = (this.bHead + 1) % MAX_BULLETS;
+    if (idx + 1 > this.bHigh) this.bHigh = idx + 1;
+    const k = idx * 3;
+    this.bx[k] = pos.x; this.bx[k + 1] = pos.y; this.bx[k + 2] = pos.z;
+    this.bv[k] = vel.x; this.bv[k + 1] = vel.y; this.bv[k + 2] = vel.z;
+    this.bAge[idx] = 0;
+    this.bDmg[idx] = damage;
+    this.bTracer[idx] = tracer ? 1 : 0;
+    this.bOwner[idx] = owner;
+  }
+
+  /** A surface-to-air missile from a ship. Flares / chaff work on it like on any other. */
+  launchSam(owner: Attacker, pos: Vector3, dir: Vector3, target: Target, def: MissileDef): void {
+    const v = dir.clone().normalize().multiplyScalar(70);
+    const m: Missile = {
+      id: missileIds++, def, owner, target, decoy: null, pos: pos.clone(), prev: pos.clone(), vel: v, speed: 70, age: 0,
+      tracking: true, lostTimer: 0, checkTimer: 0, trailAcc: 0, mesh: this.makeMissileMesh(def), alive: true, blindUntil: 0,
+    };
+    this.missiles.push(m);
+    this.root.add(m.mesh);
+    this.events.emit({ type: 'launch', shooter: owner, weapon: def.name });
+    this.audio.missileLaunch(pos);
+    this.fire.emit(pos.x, pos.y, pos.z, 0, 0, 0, 0.35, 3, 12, 3, 2.4, 1.6, 0.9);
   }
 
   /** Hold the trigger: spawn the bullets owed this tick. */
@@ -630,9 +670,12 @@ export class Combat implements FighterHooks {
     this.tracerCount = tc;
   }
 
-  private bulletHit(owner: Fighter, t: Target, dmg: number, h: SegHit): void {
-    owner.stats.hits++;
-    owner.stats.damage += dmg;
+  private bulletHit(owner: Attacker, t: Target, dmg: number, h: SegHit): void {
+    const st = (owner as Partial<Fighter>).stats;
+    if (st) {
+      st.hits++;
+      st.damage += dmg;
+    }
     t.hit(h, dmg, owner, 'Cannon', Math.random() < 0.04);
     this.fire.emit(h.point.x, h.point.y, h.point.z, (Math.random() - 0.5) * 12, (Math.random() - 0.3) * 12, (Math.random() - 0.5) * 12, 0.16, 0.5, 0.1, 3, 2, 0.8, 0.9, 1.5);
     this.audio.hit(h.point);
@@ -1003,7 +1046,7 @@ export class Combat implements FighterHooks {
     f.stats.deaths++;
     const kf = killer ? this.byId.get(killer.id) : undefined;
     if (kf && kf !== f) kf.stats.kills++;
-    for (const a of cr.assists) this.byId.get(a.id)!.stats.assists++;
+    for (const a of cr.assists) { const af = this.byId.get(a.id); if (af) af.stats.assists++; }
     this.events.emit({ type: 'kill', killer, victim: f, weapon: cr.weapon || weapon || reason, assists: cr.assists });
   }
 
@@ -1188,7 +1231,7 @@ export class Combat implements FighterHooks {
     for (const e of t.lastAttackers.values()) if (e.who.id !== killer?.id && t.clock - e.t < 25 && e.dmg >= 12) assists.push(e.who);
     const kf = killer ? this.byId.get(killer.id) : undefined;
     if (kf) kf.stats.kills++;
-    for (const a of assists) this.byId.get(a.id)!.stats.assists++;
+    for (const a of assists) { const af = this.byId.get(a.id); if (af) af.stats.assists++; }
     this.detonate(t.pos, 10, 0, null, 'target', t.kind === 'ground' ? 14 : 12);
     this.events.emit({ type: 'kill', killer, victim: t, weapon, assists });
   }

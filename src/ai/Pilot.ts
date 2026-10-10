@@ -8,6 +8,7 @@ import { scanTerrain, type TerrainThreat } from '../flight/TerrainAssist';
 import type { Combat } from '../weapons/Combat';
 import type { Brain, Fighter } from '../weapons/Fighter';
 import type { AiSkillId } from '../core/Settings';
+import type { Target } from '../weapons/types';
 
 export type AiSkill = AiSkillId;
 
@@ -36,7 +37,7 @@ export const SKILLS: Record<AiSkill, SkillDef> = {
   ace: { label: 'Ace', reaction: 0.3, aimErr: 0.006, gunAng: 0.024, gunRange: 1000, missileCool: 24, cm: 0.95, bvr: 10000, g: 1 },
 };
 
-type Mode = 'patrol' | 'bvr' | 'wvr' | 'defend' | 'evade' | 'rtb';
+type Mode = 'patrol' | 'bvr' | 'wvr' | 'defend' | 'evade' | 'rtb' | 'strike';
 
 const UP = new Vector3(0, 1, 0);
 const _d = new Vector3();
@@ -80,6 +81,12 @@ export class PilotBrain implements Brain {
   private notchSide: 1 | -1 = 1;
   /** Horizontal direction toward the missile we are evading (kept per pilot: scratch vectors are shared). */
   private evadeLos = new Vector3(0, 0, -1);
+  /** Carrier strike: a pilot with a goal bombs it (while nobody is on top of them), then goes home to rearm. */
+  strikeGoal: (() => Target | null) | null = null;
+  private strikeT = 0;
+  private strikeOff = 0;
+  private strikeBombs = 2;
+  private strikeRocketT = 0;
 
   constructor(
     private combat: Combat,
@@ -97,6 +104,8 @@ export class PilotBrain implements Brain {
     this.evadeT = 0;
     this.crank = 0;
     this.rtbBlock = 0;
+    this.strikeT = 0;
+    this.strikeBombs = 2;
     this.missileCool = 14 + Math.random() * 14;
     this.aim.snapTo(f.aircraft.flight);
   }
@@ -157,7 +166,11 @@ export class PilotBrain implements Brain {
     // ---- what to do ----
     let speed = fl.def.flight.maxSpeed * 0.7;
     let ab = false;
-    const needsRtb = f.damage.health() < 0.3 || f.damage.fuel < 0.14 || (w.remaining('ir') + w.remaining('radar') === 0 && w.gunAmmo < 25);
+    const strikeLeft = w.remaining('bomb') + w.remaining('rocket');
+    const needsRtb =
+      f.damage.health() < 0.3 || f.damage.fuel < 0.14 || (w.remaining('ir') + w.remaining('radar') === 0 && w.gunAmmo < 25) ||
+      (this.strikeGoal !== null && strikeLeft === 0);
+    const strikeTgt = this.strikeGoal && strikeLeft > 0 ? this.strikeGoal() : null;
     if (evading || this.evadeT > 0) {
       this.mode = 'evade';
       if (!evading) _d.crossVectors(this.evadeLos, UP).multiplyScalar(this.evadeSide);
@@ -174,6 +187,10 @@ export class PilotBrain implements Brain {
     } else if (needsRtb && this.rtbBlock <= 0) {
       this.mode = 'rtb';
       speed = this.goHome(f, _d);
+    } else if (strikeTgt && (!en || en.pos.distanceToSquared(f.pos) > (en.weapons.target === f ? 2400 : 1300) ** 2)) {
+      this.mode = 'strike';
+      speed = this.strike(f, strikeTgt, dt, _d);
+      ab = fl.speed < speed - 50;
     } else if (en) {
       speed = this.fight(f, en, dt, _d);
       ab = fl.speed < speed - 35;
@@ -248,6 +265,65 @@ export class PilotBrain implements Brain {
     c.afterburner = ab || fl.speed < speed - 70;
     c.gearDown = false;
     c.airbrake = false;
+  }
+
+  // ---- strike run ------------------------------------------------------------------------------
+
+  /** Approach the target low and straight, drop bombs on the computed release point, fire rockets on the way in, then leave. */
+  private strike(f: Fighter, tgt: Target, dt: number, out: Vector3): number {
+    const fl = f.aircraft.flight;
+    const w = f.weapons;
+    const maxV = fl.def.flight.maxSpeed;
+    fl.forward(_f);
+    this.strikeT -= dt;
+    this.strikeRocketT -= dt;
+    if (this.strikeT > 0) {
+      // egress: straight on and a gentle climb, away from the guns
+      out.copy(_f);
+      out.y = 0;
+      out.normalize();
+      out.y = 0.16;
+      return maxV * 0.8;
+    }
+    _r.copy(tgt.pos).sub(f.pos);
+    let dh = Math.hypot(_r.x, _r.z) || 1;
+    // each run is aimed a little off the centre line: how far depends on the pilot's skill
+    const px = -_r.z / dh;
+    const pz = _r.x / dh;
+    _r.x += px * this.strikeOff;
+    _r.z += pz * this.strikeOff;
+    dh = Math.hypot(_r.x, _r.z) || 1;
+    const hx = _r.x / dh;
+    const hz = _r.z / dh;
+    const h = f.pos.y - tgt.pos.y;
+    const want = tgt.pos.y + (dh > 4200 ? Math.max(this.patrolAlt - tgt.pos.y, 350) : 150 + dh * 0.05);
+    out.set(hx, clamp((want - f.pos.y) / 700, -0.3, 0.2), hz);
+    const fh = Math.hypot(_f.x, _f.z) || 1;
+    const align = (_f.x * hx + _f.z * hz) / fh;
+    if (align > 0.97 && dh < 2800 && w.cooldown <= 0 && w.remaining('bomb') > 0) {
+      // time for a bomb to fall from here, at our ground speed
+      const rel = Math.hypot(fl.vel.x, fl.vel.z) * Math.sqrt((2 * Math.max(h, 10)) / GRAVITY);
+      if (dh <= rel + 30 && this.combat.dropBomb(f)) {
+        this.strikeBombs--;
+        if (this.strikeBombs <= 0 || w.remaining('bomb') === 0) this.endRun(5.5);
+      }
+    }
+    if (align > 0.985 && dh < 1500 && dh > 350 && w.remaining('rocket') > 0 && this.strikeRocketT < -2) this.strikeRocketT = 1;
+    if (this.strikeRocketT > 0) this.combat.fireRockets(f, dt);
+    if (dh < 260) this.endRun(6);
+    return maxV * 0.62;
+  }
+
+  /** A freshly assigned strike pilot picks the aim offset for the first run. */
+  endRunInit(): void {
+    this.strikeT = 0;
+    this.strikeOff = (Math.random() * 2 - 1) * (this.sk.aimErr / 0.006) * 14;
+  }
+
+  private endRun(seconds: number): void {
+    this.strikeT = seconds;
+    this.strikeBombs = 2;
+    this.strikeOff = (Math.random() * 2 - 1) * (this.sk.aimErr / 0.006) * 14;
   }
 
   // ---- target selection ----------------------------------------------------------------------

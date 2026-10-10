@@ -42,6 +42,9 @@ export interface SurfaceInfo {
   height: number;
   onRunway: boolean;
   onApron: boolean;
+  /** On a carrier's flight deck (which team owns it), else unset. */
+  onDeck?: boolean;
+  deckTeam?: 'blue' | 'red';
 }
 
 export interface FlightEnv {
@@ -129,6 +132,8 @@ export class FlightModel {
   impact: { severity: number; belly: boolean; rough: boolean } | null = null;
   /** Grounded and sliding over rough ground (speed, else 0). */
   scrape = 0;
+  /** Currently over a carrier deck. */
+  onDeck = false;
 
   constructor(public def: AircraftDef, public difficulty: DifficultyDef) {}
 
@@ -240,6 +245,8 @@ export class FlightModel {
     const thrustAcc = G0 * tw * Math.pow(rho, FLIGHT.thrustDensityExp) * mods.thrust;
 
     _acc.set(0, 0, 0).addScaledVector(_fwd, thrustAcc).addScaledVector(_lift, liftAcc).addScaledVector(_side, sideAcc).addScaledVector(_vhat, -dragAcc);
+    // carrier catapult: full throttle on the deck flings the aircraft off the bow
+    if (this.onDeck && this.grounded && c.throttle > 0.85 && speed < 98) _acc.addScaledVector(_fwd, 40);
     // load factor along the pilot's "up" (specific force: gravity excluded)
     const gInst = _acc.dot(_up) / G0;
     this.gLoad += (gInst - this.gLoad) * Math.min(1, dt * 8);
@@ -341,6 +348,7 @@ export class FlightModel {
     const diff = this.difficulty;
     const s = env.surfaceAt(this.pos.x, this.pos.z, _surf);
     this.agl = this.pos.y - s.height;
+    this.onDeck = !!s.onDeck;
     // gear destroyed while rolling: it collapses at once and the aircraft settles onto its belly
     if (this.grounded && this.mods.gearBroken && this.gearPos > 0) {
       this.pos.y -= lerp(f.bellyHeight, f.gearHeight, this.gearPos) - f.bellyHeight;
@@ -435,7 +443,8 @@ export class FlightModel {
     const braking = c.airbrake || (smooth && diff.id === 'arcade' && c.throttle < 0.08 && !c.afterburner);
     const gearDown = this.gearPos > 0.85;
     // rough ground slows an aircraft hard, a belly slide harder still
-    const decel = (smooth ? Math.max(braking ? FLIGHT.brakeFriction * (diff.id === 'arcade' ? 1.2 : 1) : FLIGHT.rollingFriction, gearDown ? 0 : 0.55) : gearDown ? (braking ? 0.75 : 0.55) : 0.8) * G0;
+    // a carrier deck: the arrestor wire catches us (no brake key needed)
+    const decel = this.onDeck && c.throttle < 0.5 ? 3.2 * G0 : (smooth ? Math.max(braking ? FLIGHT.brakeFriction * (diff.id === 'arcade' ? 1.2 : 1) : c.throttle < 0.08 && !c.afterburner ? FLIGHT.idleRollFriction : FLIGHT.rollingFriction, gearDown ? 0 : 0.55) : gearDown ? (braking ? 0.75 : 0.55) : 0.8) * G0;
     this.scrape = smooth ? 0 : this.speed;
     vs = Math.max(0, vs - decel * dt);
     this.vel.x = fx * vs;

@@ -8,6 +8,8 @@ export interface MatchConfig {
   teamSize: number;
   /** Last Stand: lives per pilot (0 = not a lives match). The match is decided by who is left, not by a kill count. */
   lives?: number;
+  /** Carrier strike: the match is decided by the two carriers' condition, not by kills. */
+  strike?: boolean;
 }
 
 export type Winner = Team | 'draw';
@@ -28,7 +30,7 @@ export class Match {
 
   /** A fighter was destroyed. Only kills against the other team score; crashes and friendly losses do not. */
   onKill(killer: Team | null, victim: Team): void {
-    if (this.over || !killer || killer === victim || this.cfg.lives) return;
+    if (this.over || !killer || killer === victim || this.cfg.lives || this.cfg.strike) return;
     this.score[killer]++;
     if (this.score[killer] >= this.cfg.scoreLimit) this.finish(killer, `${killer === 'blue' ? 'Blue' : 'Red'} reached ${this.cfg.scoreLimit} kills`);
   }
@@ -48,6 +50,16 @@ export class Match {
     else if (red === 0) this.finish('blue', 'Red team eliminated');
   }
 
+  /** Carrier strike: each carrier's remaining strength (0..1). The score fields hold it as a percentage. */
+  setCarriers(blue: number, red: number): void {
+    if (this.over || !this.cfg.strike) return;
+    this.score.blue = Math.ceil(blue * 100);
+    this.score.red = Math.ceil(red * 100);
+    if (blue <= 0 && red <= 0) this.finish('draw', 'Both carriers were sunk');
+    else if (red <= 0) this.finish('blue', 'The Red carrier was sunk');
+    else if (blue <= 0) this.finish('red', 'Your carrier was sunk');
+  }
+
   update(dt: number): void {
     if (this.over) return;
     this.time += dt;
@@ -62,7 +74,7 @@ export class Match {
     }
     if (this.cfg.timeLimit > 0 && this.time >= this.cfg.timeLimit) {
       const { blue, red } = this.score;
-      this.finish(blue === red ? 'draw' : blue > red ? 'blue' : 'red', 'Time limit reached');
+      this.finish(blue === red ? 'draw' : blue > red ? 'blue' : 'red', this.cfg.strike ? `Time limit reached: Blue carrier ${blue}%, Red carrier ${red}%` : 'Time limit reached');
     }
   }
 

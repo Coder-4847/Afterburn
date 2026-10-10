@@ -9,7 +9,9 @@ export type TerrainAssist = 'off' | 'warn' | 'auto';
 export type ControlScheme = 'mouse' | 'mouse-throttle-ws';
 export type DroneMode = 'passive' | 'hostile';
 /** What you are playing: the range, an empty sky, or a team deathmatch against AI. */
-export type SortieMode = 'training' | 'freeflight' | 'tdm' | 'elimination';
+export type SortieMode = 'training' | 'freeflight' | 'tdm' | 'elimination' | 'carrier';
+/** Carrier strike: where you appear (and re-appear) after each sortie. */
+export type CarrierSpawn = 'deck' | 'air';
 export type AiSkillId = 'rookie' | 'regular' | 'ace';
 
 export interface Settings {
@@ -45,6 +47,7 @@ export interface Settings {
   // sortie setup
   mapId: string;
   sortie: SortieMode;
+  carrierSpawn: CarrierSpawn;
   /** Team deathmatch: players per side (you count as one), score limit (kills), time limit (minutes, 0 = none). */
   teamSize: number;
   scoreLimit: number;
@@ -89,6 +92,7 @@ export const DEFAULT_SETTINGS: Settings = {
   drones: 'passive',
   mapId: 'coral',
   sortie: 'training',
+  carrierSpawn: 'deck',
   teamSize: 2,
   scoreLimit: 20,
   timeLimit: 10,

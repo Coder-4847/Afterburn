@@ -111,6 +111,12 @@ export const STORES: Record<string, StoreDef> = Object.fromEntries(
   ].map((d) => [d.id, d as StoreDef]),
 );
 
+/** Ship-launched surface-to-air missiles (not in any aircraft's loadout). */
+export const SAMS: Record<'ir' | 'radar', MissileDef> = {
+  ir: ir({ id: 'sam-ir', name: 'Sea Sparrow', accel1: 150, burn1: 3.2, accel2: 24, burn2: 4.5, maxG: 24, acquireCone: 70, trackCone: 75, lockRange: 6000, flightTime: 16, nav: 3.6, fuseRadius: 13, blastRadius: 17, warhead: 150, decoySusceptibility: 0.62, length: 3.3, radius: 0.1 }),
+  radar: radar({ id: 'sam-radar', name: 'SM-2', accel1: 150, burn1: 4, accel2: 26, burn2: 7, maxG: 22, acquireCone: 70, trackCone: 70, lockRange: 8000, activeRange: 3500, flightTime: 22, nav: 3.4, fuseRadius: 15, blastRadius: 20, warhead: 170, decoySusceptibility: 0.6, length: 4.2, radius: 0.12 }),
+};
+
 export function store(id: string): StoreDef {
   return STORES[id];
 }

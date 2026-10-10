@@ -1,5 +1,6 @@
 import {
-  BoxGeometry, ConeGeometry, BufferAttribute, BufferGeometry, CylinderGeometry, Float32BufferAttribute, Group, Matrix4, Mesh, SphereGeometry, Vector3,
+  BoxGeometry, ConeGeometry, BufferAttribute, BufferGeometry, Color, CylinderGeometry, Float32BufferAttribute, Group, Matrix4, Mesh, MeshStandardMaterial,
+  SphereGeometry, TorusGeometry, Vector3,
   type Material, type Object3D,
 } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
@@ -147,8 +148,67 @@ interface SecAt {
   yc: number;
 }
 
+type Section = [number, number, number, number];
+
+/**
+ * Smooth the fuselage stations: a monotone cubic (no overshoot) through the spec's [z, half width, half height, y centre]
+ * stations, `sub` samples per segment. The straight-line loft of a handful of stations looks faceted; this does not.
+ */
+function refineSections(s: Section[], sub: number): Section[] {
+  const n = s.length;
+  if (n < 3) return s;
+  const slopes = [1, 2, 3].map((c) => {
+    const d: number[] = [];
+    for (let i = 0; i < n - 1; i++) d.push((s[i + 1][c] - s[i][c]) / (s[i + 1][0] - s[i][0] || 1e-6));
+    const m = new Array<number>(n);
+    m[0] = d[0];
+    m[n - 1] = d[n - 2];
+    for (let i = 1; i < n - 1; i++) m[i] = d[i - 1] * d[i] <= 0 ? 0 : (d[i - 1] + d[i]) / 2;
+    for (let i = 0; i < n - 1; i++) {
+      if (d[i] === 0) {
+        m[i] = 0;
+        m[i + 1] = 0;
+      } else {
+        const a = m[i] / d[i];
+        const b = m[i + 1] / d[i];
+        const h = a * a + b * b;
+        if (h > 9) {
+          const t = 3 / Math.sqrt(h);
+          m[i] = t * a * d[i];
+          m[i + 1] = t * b * d[i];
+        }
+      }
+    }
+    return m;
+  });
+  const out: Section[] = [];
+  for (let i = 0; i < n - 1; i++) {
+    const h = s[i + 1][0] - s[i][0];
+    for (let k = 0; k < sub; k++) {
+      const t = k / sub;
+      const t2 = t * t;
+      const t3 = t2 * t;
+      const h00 = 2 * t3 - 3 * t2 + 1;
+      const h10 = t3 - 2 * t2 + t;
+      const h01 = -2 * t3 + 3 * t2;
+      const h11 = t3 - t2;
+      const v = (c: number) => h00 * s[i][c] + h10 * h * slopes[c - 1][i] + h01 * s[i + 1][c] + h11 * h * slopes[c - 1][i + 1];
+      out.push([s[i][0] + t * h, Math.max(0, v(1)), Math.max(0, v(2)), v(3)]);
+    }
+  }
+  out.push(s[n - 1]);
+  return out;
+}
+
+const refined = new WeakMap<ModelSpec, Section[]>();
+function fine(spec: ModelSpec): Section[] {
+  let r = refined.get(spec);
+  if (!r) refined.set(spec, (r = refineSections(spec.sections, 6)));
+  return r;
+}
+
 export function secAt(spec: ModelSpec, f: number): SecAt {
-  const s = spec.sections;
+  const s = fine(spec);
   f = clamp(f, 0, 1);
   for (let i = 0; i < s.length - 1; i++) {
     if (f >= s[i][0] && f <= s[i + 1][0]) {
@@ -237,8 +297,8 @@ export class JetModel implements ModelHandle {
         const m = new Matrix4().multiplyMatrices(parent, child.matrix);
         const mesh = child as Mesh;
         if (mesh.isMesh && !Array.isArray(mesh.material)) {
-          const g = mesh.geometry.clone().applyMatrix4(m);
-          const key = [mesh.material.uuid, mesh.castShadow, g.index ? 'i' : 'n', Object.keys(g.attributes).sort().join(',')].join('|');
+          const g = (mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry.clone()).applyMatrix4(m);
+          const key = [mesh.material.uuid, mesh.castShadow, Object.keys(g.attributes).sort().join(',')].join('|');
           let b = buckets.get(key);
           if (!b) buckets.set(key, (b = { mat: mesh.material, shadow: mesh.castShadow, geos: [] }));
           b.geos.push(g);
@@ -290,8 +350,11 @@ export class JetModel implements ModelHandle {
 
   private buildFuselage(spec: ModelSpec): void {
     const L = spec.length;
-    const rings: Ring[] = spec.sections.map(([f, hw, hh, yc]) => ({ z: -L / 2 + f * L, hw, hh, cx: 0, cy: yc }));
-    this.mesh(loft(rings, spec.shapeN ?? 2.5, 24), this.mats.body);
+    const n = spec.shapeN ?? 2.5;
+    const secs = refineSections(spec.sections, 3);
+    const rings: Ring[] = secs.map(([f, hw, hh, yc]) => ({ z: -L / 2 + f * L, hw, hh, cx: 0, cy: yc }));
+    this.mesh(loft(rings, n, 30), this.mats.body);
+    this.fuselageDetail(spec, secs, n);
 
     // twin-engine jets with widely spaced engines get distinct nacelles (Flanker family, Su-57)
     if (spec.engines === 2 && (spec.engineSpacing ?? 0) >= TWIN_NACELLE_SPACING) {
@@ -356,7 +419,58 @@ export class JetModel implements ModelHandle {
         this.mesh(polySlab(tab, origin, up, () => w.thickness * 0.36), this.mats.accent, pg);
       }
       this.wingtips.push(tipTE.clone().add(new Vector3(0, 0, -w.tipChord * 0.2)));
+
+      // leading-edge slat seam, flap-track fairings and a navigation light on the tip
+      const chord = (t: number) => lerp(w.rootChord, w.tipChord, t);
+      const slat = (a: number, b: number) => [LE(a), LE(b), LE(b).add(new Vector3(0, 0, chord(b) * 0.13)), LE(a).add(new Vector3(0, 0, chord(a) * 0.13))];
+      this.mesh(polySlab(slat(0.22, 0.96), origin, up, (p) => thick(p) + 0.035), this.mats.dark, pg);
+      for (const t of [0.14, 0.34, 0.62, 0.84]) {
+        const fairing = this.mesh(new SphereGeometry(1, 8, 6), this.mats.dark, pg);
+        fairing.scale.set(0.07, 0.06 * (1 - t * 0.5), chord(t) * 0.16 + 0.2);
+        fairing.position.copy(TE(t)).add(new Vector3(0, -0.07, chord(t) * 0.02));
+      }
+      this.light(tipLE.clone().add(new Vector3(s * 0.03, 0.0, w.tipChord * 0.3)), s > 0 ? [0.2, 2.6, 0.5] : [2.8, 0.2, 0.2], pg);
     }
+  }
+
+  /** Navigation / anti-collision lights: tiny, unlit and bright, merged into one mesh per holder with vertex colours. */
+  private light(p: Vector3, _rgb: [number, number, number], parent: Group, r = 0.065): void {
+    // (team-coloured: it merges into the accent mesh, so a light costs no extra draw call)
+    this.mesh(new SphereGeometry(r, 8, 6), this.mats.accent, parent, false).position.copy(p);
+  }
+
+  /** Radome, nose band, pitot, dorsal spine, arrestor hook: everything on the fuselage that is not the skin itself. */
+  private fuselageDetail(spec: ModelSpec, secs: Section[], n: number): void {
+    const L = spec.length;
+    const ring = (s: Section, k: number): Ring => ({ z: -L / 2 + s[0] * L, hw: s[1] * k, hh: s[2] * k, cx: 0, cy: s[3] });
+    // dark radome over the nose
+    const nose = secs.filter((s) => s[0] <= 0.1);
+    if (nose.length >= 3) this.mesh(loft(nose.map((s) => ring(s, 1.012)), n, 30), this.mats.dark);
+    // a thin team-colour band behind it
+    const band = secs.filter((s) => s[0] >= 0.165 && s[0] <= 0.185);
+    if (band.length >= 2) this.mesh(loft(band.map((s) => ring(s, 1.01)), n, 30), this.mats.accent);
+    // pitot boom
+    const pitot = this.mesh(new CylinderGeometry(0.018, 0.03, L * 0.05, 6).rotateX(Math.PI / 2), this.mats.strut);
+    pitot.position.set(0, secs[0][3], -L / 2 - L * 0.018);
+    // dorsal spine from behind the canopy toward the fin
+    const f0 = spec.canopyZ + ((spec.canopyLen ?? 2) * 0.85) / L;
+    const f1 = Math.min(0.8, f0 + 0.3);
+    const spine: Ring[] = [];
+    for (let i = 0; i <= 8; i++) {
+      const t = i / 8;
+      const f = f0 + (f1 - f0) * t;
+      const sec = secAt(spec, f);
+      const k = Math.pow(Math.sin(Math.PI * Math.min(1, t * 0.92 + 0.04)), 0.7);
+      const hw = Math.min(sec.hw * 0.5, 0.45) * k + 0.01;
+      const hh = 0.17 * k + 0.01;
+      spine.push({ z: -L / 2 + f * L, hw, hh, cx: 0, cy: sec.yc + sec.hh - 0.04 + hh * 0.5 });
+    }
+    this.mesh(loft(spine, 2.4, 14), this.mats.body);
+    // arrestor hook stub under the tail
+    const tail = spec.sections[spec.sections.length - 1];
+    const hook = this.mesh(new BoxGeometry(0.07, 0.07, 1.5), this.mats.dark);
+    hook.position.set(0, tail[3] - tail[2] * 0.75, L / 2 - 1.8);
+    hook.rotation.x = 0.16;
   }
 
   // ---- tailplanes, canards, fins -------------------------------------------------------------
@@ -440,6 +554,13 @@ export class JetModel implements ModelHandle {
       } else {
         this.mesh(polySlab([rootLE, tipLE, tipTE, rootTE], origin, xAxis, thick), this.mats.flat, grp);
       }
+      if (!ventral) {
+        // antenna cap and a white tail light
+        const cap = this.mesh(new SphereGeometry(1, 8, 6), this.mats.dark, grp);
+        cap.scale.set(0.1, 0.1, Math.max(0.5, f.tipChord * 0.4));
+        cap.position.set(0, yb + h + 0.04, z0 + f.sweep + f.tipChord * 0.4);
+        this.light(new Vector3(0, yb + h * 0.82, z0 + f.sweep * 0.82 + f.tipChord + 0.05), [2.4, 2.4, 2.4], grp, 0.055);
+      }
     }
   }
 
@@ -457,6 +578,16 @@ export class JetModel implements ModelHandle {
       // body skin covers everything but the lip, so only the dark front disc shows
       const shell = loft(rings.slice(1).map((r) => ({ ...r, hw: r.hw * 1.01, hh: r.hh * 1.01 })), 3.6, 16);
       this.mesh(shell, this.mats.body);
+      // rolled lip and a boundary-layer splitter
+      const lip = this.mesh(new TorusGeometry(1, 0.035, 6, 24).scale(it.w * 0.5 * 1.03, it.h * 0.5 * 1.03, 1), this.mats.body);
+      lip.position.set(s * it.x, it.y, z0 + 0.02);
+      if (it.x !== 0) {
+        const plate = this.mesh(new BoxGeometry(0.05, it.h * 1.15, it.len * 0.55), this.mats.dark);
+        plate.position.set(s * (it.x - it.w * 0.5 - 0.07), it.y, z0 + it.len * 0.2);
+      } else {
+        const plate = this.mesh(new BoxGeometry(it.w * 0.95, 0.05, it.len * 0.45), this.mats.dark);
+        plate.position.set(0, it.y - it.h * 0.5 - 0.05, z0 + it.len * 0.12);
+      }
     };
     for (const it of spec.intakes) {
       if (it.x === 0) intake(it, 1);
@@ -466,12 +597,33 @@ export class JetModel implements ModelHandle {
       }
     }
 
-    // canopy
+    // canopy: a teardrop bubble sitting in the fuselage, with bows, rails, a seat and a pilot inside
     const sec = secAt(spec, spec.canopyZ);
-    const len = spec.canopyLen ?? 2.0;
-    const canopy = this.mesh(new SphereGeometry(1, 24, 14), this.mats.glass);
-    canopy.scale.set(Math.min(sec.hw * 0.6, 0.62), 0.5, len);
-    canopy.position.set(0, sec.yc + sec.hh - 0.12, -L / 2 + spec.canopyZ * L + len * 0.25);
+    const len = (spec.canopyLen ?? 2.0) * 1.15;
+    const hwMax = Math.min(sec.hw * 0.62, 0.64);
+    const hhMax = 0.36;
+    const zc = -L / 2 + spec.canopyZ * L - len * 0.12;
+    const prof: [number, number, number][] = [[0, 0.1, 0.12], [0.1, 0.52, 0.5], [0.26, 0.86, 0.88], [0.48, 1, 1], [0.7, 0.9, 0.84], [0.88, 0.58, 0.52], [1, 0.2, 0.16]];
+    const bubble: Ring[] = prof.map(([t, w, h]) => {
+      const s = secAt(spec, spec.canopyZ + (t * len - len * 0.12) / L);
+      const base = s.yc + s.hh - 0.3;
+      return { z: zc + t * len, hw: hwMax * w, hh: hhMax * h, cx: 0, cy: base + hhMax * h };
+    });
+    this.mesh(loft(bubble, 2.2, 22), this.mats.glass);
+    for (const t of [0.12, 0.5, 0.9]) {
+      const r = bubble[prof.findIndex((p) => p[0] >= t)];
+      const bow = this.mesh(new TorusGeometry(1, 0.026, 5, 18, Math.PI).scale(r.hw * 1.04, r.hh * 1.04, 1), this.mats.dark);
+      bow.position.set(0, r.cy - r.hh * 0.02, r.z);
+    }
+    for (const x of [1, -1]) {
+      const rail = this.mesh(new BoxGeometry(0.04, 0.05, len * 0.86), this.mats.dark);
+      const r = bubble[3];
+      rail.position.set(x * r.hw * 0.97, r.cy - r.hh * 0.6, zc + len * 0.5);
+    }
+    const seat = this.mesh(new BoxGeometry(0.42, 0.5, 0.36), this.mats.dark);
+    seat.position.set(0, bubble[3].cy - 0.1, zc + len * 0.58);
+    const helmet = this.mesh(new SphereGeometry(0.15, 10, 8), this.mats.strut);
+    helmet.position.set(0, bubble[3].cy + 0.12, zc + len * 0.5);
   }
 
   // ---- engines -------------------------------------------------------------------------------
@@ -488,6 +640,17 @@ export class JetModel implements ModelHandle {
       this.root.add(grp);
       const shell = this.mesh(new CylinderGeometry(r * 0.82, r, 1.5, 22, 1, true).rotateX(Math.PI / 2), this.mats.nozzle, grp);
       shell.position.z = 0.55;
+      // exhaust petals
+      const petals: BufferGeometry[] = [];
+      for (let k = 0; k < 16; k++) {
+        const a = (k / 16) * Math.PI * 2;
+        const pg = new BoxGeometry(((Math.PI * 2 * r) / 16) * 0.92, 0.014, 0.55);
+        pg.applyMatrix4(new Matrix4().makeRotationZ(a + Math.PI / 2).multiply(new Matrix4().makeRotationX(-0.1)).setPosition(Math.cos(a) * r * 1.0, Math.sin(a) * r * 1.0, 1.0));
+        petals.push(pg);
+      }
+      const merged = mergeGeometries(petals, false);
+      for (const p of petals) p.dispose();
+      if (merged) this.mesh(merged, this.mats.nozzle, grp);
       const glow = this.mesh(new CylinderGeometry(r * 0.7, r * 0.78, 0.6, 18, 1, true).rotateX(Math.PI / 2), this.mats.heat, grp, false);
       glow.position.z = 0.35;
       const burner = new Afterburner(r);
@@ -496,6 +659,12 @@ export class JetModel implements ModelHandle {
       this.afterburners.push(burner);
       if (spec.vectoringNozzles) this.nozzleGroups.push(grp);
       this.nozzles.push(new Vector3(x, tail[3], L / 2 + 0.6));
+    }
+    if (spec.engines === 2) {
+      // tail sting between the engines
+      const sting = this.mesh(new CylinderGeometry(0.07, 0.2, 2.2, 10).rotateX(Math.PI / 2), this.mats.body);
+      sting.position.set(0, tail[3] + 0.05, L / 2 + 0.1);
+      this.light(new Vector3(0, tail[3] + 0.05, L / 2 + 1.2), [2.4, 2.4, 2.4], this.root, 0.05);
     }
   }
 
@@ -506,18 +675,47 @@ export class JetModel implements ModelHandle {
     const def = this.def;
     const nacelle = spec.engines === 2 && (spec.engineSpacing ?? 0) >= TWIN_NACELLE_SPACING;
     const mainX = nacelle ? spec.engineSpacing! * 0.9 : Math.max(1.25, secAt(spec, 0.58).hw * 0.75 + 0.35);
-    const makeLeg = (grp: Group, x: number, z: number, y0: number, wheelR: number, wide: number): void => {
+    // each leg is built from a handful of pieces merged into one mesh per material (strut metal, rubber, dark hardware)
+    const makeLeg = (grp: Group, x: number, z: number, y0: number, wheelR: number, wide: number, kind: 'nose' | 'mainL' | 'mainR'): void => {
       const wy = -(def.flight.gearHeight - wheelR) - y0;
-      const strut = this.mesh(new CylinderGeometry(0.06, 0.08, -wy, 8), this.mats.strut, grp);
-      strut.position.y = wy / 2;
-      const wheel = this.mesh(new CylinderGeometry(wheelR, wheelR, wide, 16).rotateZ(Math.PI / 2), this.mats.tyre, grp);
-      wheel.position.y = wy;
+      const drop = -wy;
+      const metal: BufferGeometry[] = [];
+      const rubber: BufferGeometry[] = [];
+      const hard: BufferGeometry[] = [];
+      const at = (g: BufferGeometry, px: number, py: number, pz: number): BufferGeometry => g.translate(px, py, pz);
+      metal.push(at(new CylinderGeometry(0.09, 0.105, drop * 0.55, 10), 0, wy * 0.275, 0));
+      metal.push(at(new CylinderGeometry(0.05, 0.055, drop * 0.5, 8), 0, wy * 0.77, 0));
+      const twin = kind === 'nose';
+      const offs = twin ? [-0.12, 0.12] : [0];
+      for (const ox of offs) {
+        rubber.push(at(new CylinderGeometry(wheelR, wheelR, wide, 18).rotateZ(Math.PI / 2), ox, wy, 0));
+        metal.push(at(new CylinderGeometry(wheelR * 0.55, wheelR * 0.55, wide + 0.05, 12).rotateZ(Math.PI / 2), ox, wy, 0));
+      }
+      hard.push(at(new BoxGeometry(0.035, 0.035, 0.34), 0, wy * 0.6, -0.14));
+      hard.push(at(new BoxGeometry(0.035, 0.035, 0.34), 0, wy * 0.6, 0.14));
+      if (kind === 'nose') {
+        // catapult launch bar and a pair of small doors
+        hard.push(at(new BoxGeometry(0.05, 0.05, 0.7).rotateX(0.5), 0, wy + 0.12, -0.38));
+        for (const sx of [-1, 1]) hard.push(at(new BoxGeometry(0.02, 0.45, 0.6), sx * 0.24, wy * 0.2, 0));
+      } else {
+        const sx = kind === 'mainL' ? -1 : 1;
+        hard.push(at(new BoxGeometry(0.02, 0.62, 0.9), sx * 0.34, wy * 0.22, 0));
+        hard.push(at(new BoxGeometry(0.02, 0.5, 0.5), -sx * 0.2, wy * 0.2, 0.1));
+      }
+      const add = (list: BufferGeometry[], mat: Material): void => {
+        const m = mergeGeometries(list, false);
+        for (const g of list) g.dispose();
+        if (m) this.mesh(m, mat, grp);
+      };
+      add(metal, this.mats.strut);
+      add(rubber, this.mats.tyre);
+      add(hard, this.mats.dark);
       grp.position.set(x, y0, z);
       this.root.add(grp);
     };
-    makeLeg(this.nose, 0, -L / 2 + 0.2 * L, -0.4, 0.22, 0.14);
-    makeLeg(this.mainL, -mainX, -L / 2 + 0.58 * L, -0.4, 0.34, 0.22);
-    makeLeg(this.mainR, mainX, -L / 2 + 0.58 * L, -0.4, 0.34, 0.22);
+    makeLeg(this.nose, 0, -L / 2 + 0.2 * L, -0.4, 0.22, 0.14, 'nose');
+    makeLeg(this.mainL, -mainX, -L / 2 + 0.58 * L, -0.4, 0.34, 0.22, 'mainL');
+    makeLeg(this.mainR, mainX, -L / 2 + 0.58 * L, -0.4, 0.34, 0.22, 'mainR');
   }
 
   // ---- weapon stores -------------------------------------------------------------------------
@@ -530,12 +728,9 @@ export class JetModel implements ModelHandle {
       if (!id || !st || st.internal) return null;
       const def = STORES[id];
       const g = new Group();
-      const w = weaponMesh(def, this.mats);
+      const w = weaponMesh(def, this.mats, true);
       w.position.y = -def.radius - 0.12;
       g.add(w);
-      const pylon = new Mesh(pylonGeometry(def), this.mats.dark);
-      pylon.position.y = -0.02;
-      g.add(pylon);
       g.position.set(st.x, st.y + (st.kind === 'tip' ? 0 : 0.1), st.z);
       g.traverse((o) => { o.castShadow = true; });
       this.storeRoot.add(g);
@@ -607,9 +802,12 @@ export class JetModel implements ModelHandle {
 
 
 /** Merged weapon geometry, built once per store type and shared by every copy (two draw calls per store). */
-const weaponGeoms = new Map<string, { white: BufferGeometry | null; dark: BufferGeometry | null; pylon: BufferGeometry }>();
+const weaponGeoms = new Map<string, { geo: BufferGeometry; pylon: BufferGeometry }>();
+let storeMaterial: MeshStandardMaterial | null = null;
+const WHITE = new Color(0xc4c9ce);
+const DARK = new Color(0x2c323a);
 
-function weaponGeometry(def: StoreDef): { white: BufferGeometry | null; dark: BufferGeometry | null; pylon: BufferGeometry } {
+function weaponGeometry(def: StoreDef): { geo: BufferGeometry; pylon: BufferGeometry } {
   const hit = weaponGeoms.get(def.id);
   if (hit) return hit;
   const L = def.length;
@@ -621,34 +819,72 @@ function weaponGeometry(def: StoreDef): { white: BufferGeometry | null; dark: Bu
     to.push(geo);
   };
   if (def.kind === 'ir' || def.kind === 'radar') {
-    add(white, new CylinderGeometry(r, r, L * 0.7, 10).rotateX(Math.PI / 2), 0, 0, L * 0.05);
-    add(def.kind === 'ir' ? dark : white, new ConeGeometry(r, L * 0.3, 10).rotateX(-Math.PI / 2), 0, 0, -L * 0.45);
-    for (let i = 0; i < 4; i++) add(dark, new BoxGeometry(r * 3.4, 0.015, L * 0.16), 0, 0, L * 0.4, (i * Math.PI) / 2 + Math.PI / 4);
+    add(white, new CylinderGeometry(r, r, L * 0.62, 12).rotateX(Math.PI / 2), 0, 0, L * 0.1);
+    add(white, new CylinderGeometry(r * 0.82, r, L * 0.1, 12).rotateX(Math.PI / 2), 0, 0, L * 0.46);
+    add(def.kind === 'ir' ? dark : white, new ConeGeometry(r, L * 0.26, 12).rotateX(-Math.PI / 2), 0, 0, -L * 0.34);
+    if (def.kind === 'ir') add(white, new SphereGeometry(r * 0.42, 8, 6), 0, 0, -L * 0.47);
+    // colour bands, mid-body wings (small) and tail fins (large)
+    add(dark, new CylinderGeometry(r * 1.03, r * 1.03, L * 0.035, 12).rotateX(Math.PI / 2), 0, 0, -L * 0.18);
+    add(dark, new CylinderGeometry(r * 1.03, r * 1.03, L * 0.035, 12).rotateX(Math.PI / 2), 0, 0, L * 0.2);
+    for (let i = 0; i < 4; i++) add(dark, new BoxGeometry(r * 2.6, 0.012, L * 0.12), 0, 0, -L * 0.05, (i * Math.PI) / 2 + Math.PI / 4);
+    for (let i = 0; i < 4; i++) add(dark, new BoxGeometry(r * 3.8, 0.015, L * 0.17), 0, 0, L * 0.4, (i * Math.PI) / 2 + Math.PI / 4);
   } else if (def.kind === 'rocket') {
     add(dark, new CylinderGeometry(r, r, L, 14).rotateX(Math.PI / 2));
-    add(white, new CylinderGeometry(r * 0.96, r * 0.96, 0.06, 14).rotateX(Math.PI / 2), 0, 0, -L / 2);
+    add(white, new ConeGeometry(r * 0.96, L * 0.16, 14).rotateX(-Math.PI / 2), 0, 0, -L * 0.58);
+    add(dark, new CylinderGeometry(r * 1.04, r * 1.04, L * 0.04, 14).rotateX(Math.PI / 2), 0, 0, -L * 0.2);
+    add(dark, new CylinderGeometry(r * 1.04, r * 1.04, L * 0.04, 14).rotateX(Math.PI / 2), 0, 0, L * 0.2);
+    // tube mouths at the rear: a ring of small white discs
+    for (let i = 0; i < 7; i++) {
+      const a = i === 0 ? 0 : ((i - 1) / 6) * Math.PI * 2;
+      const rr = i === 0 ? 0 : r * 0.55;
+      add(white, new CylinderGeometry(r * 0.2, r * 0.2, 0.05, 8).rotateX(Math.PI / 2), Math.cos(a) * rr, Math.sin(a) * rr, L / 2 + 0.01);
+    }
   } else {
-    add(dark, new CylinderGeometry(r, r, L * 0.6, 12).rotateX(Math.PI / 2), 0, 0, 0);
-    add(dark, new ConeGeometry(r, L * 0.25, 12).rotateX(-Math.PI / 2), 0, 0, -L * 0.42);
-    add(dark, new CylinderGeometry(r * 0.6, r, L * 0.18, 12).rotateX(Math.PI / 2), 0, 0, L * 0.38);
+    // bomb: teardrop body, nose fuze, tail cone, cruciform fins; guided bombs add canards
+    add(dark, new CylinderGeometry(r, r, L * 0.5, 14).rotateX(Math.PI / 2), 0, 0, 0);
+    add(dark, new ConeGeometry(r, L * 0.22, 14).rotateX(-Math.PI / 2), 0, 0, -L * 0.36);
+    add(white, new CylinderGeometry(r * 0.2, r * 0.2, L * 0.07, 8).rotateX(Math.PI / 2), 0, 0, -L * 0.5);
+    add(dark, new CylinderGeometry(r * 0.55, r, L * 0.2, 14).rotateX(Math.PI / 2), 0, 0, L * 0.35);
+    add(white, new CylinderGeometry(r * 1.02, r * 1.02, L * 0.04, 14).rotateX(Math.PI / 2), 0, 0, -L * 0.1);
+    add(white, new CylinderGeometry(r * 1.02, r * 1.02, L * 0.04, 14).rotateX(Math.PI / 2), 0, 0, L * 0.1);
+    for (let i = 0; i < 4; i++) add(dark, new BoxGeometry(r * 3.6, 0.014, L * 0.16), 0, 0, L * 0.44, (i * Math.PI) / 2);
+    if ((def as { guided?: boolean }).guided) for (let i = 0; i < 4; i++) add(white, new BoxGeometry(r * 2.4, 0.012, L * 0.1), 0, 0, -L * 0.3, (i * Math.PI) / 2 + Math.PI / 4);
   }
-  const merge = (list: BufferGeometry[]): BufferGeometry | null => {
-    if (list.length === 0) return null;
-    const m = list.length === 1 ? list[0] : mergeGeometries(list, false);
-    if (list.length > 1) for (const g of list) g.dispose();
+  // one geometry, two colours (vertex colours): a store is a single draw call
+  const paint = (lists: [BufferGeometry[], Color][]): BufferGeometry => {
+    const painted: BufferGeometry[] = [];
+    for (const [list, colour] of lists) {
+      for (const g of list) {
+        const ng = g.index ? g.toNonIndexed() : g.clone();
+        const n = ng.attributes.position.count;
+        const col = new Float32Array(n * 3);
+        for (let i = 0; i < n; i++) col.set([colour.r, colour.g, colour.b], i * 3);
+        ng.setAttribute('color', new BufferAttribute(col, 3));
+        ng.deleteAttribute('uv');
+        painted.push(ng);
+      }
+    }
+    const m = mergeGeometries(painted, false)!;
+    for (const g of painted) g.dispose();
     return m;
   };
-  const out = { white: merge(white), dark: merge(dark), pylon: new BoxGeometry(0.12, 0.3, Math.min(1.4, def.length * 0.45)) };
+  const geo = paint([[white, WHITE], [dark, DARK]]);
+  // the pylon hangs above the store (the store sits r + 0.12 below the hardpoint)
+  const pylonBox = new BoxGeometry(0.12, 0.3, Math.min(1.4, def.length * 0.45));
+  pylonBox.translate(0, r + 0.1, 0);
+  const pylon = paint([[white, WHITE], [dark, DARK], [[pylonBox], DARK]]);
+  const out = { geo, pylon };
   weaponGeoms.set(def.id, out);
   return out;
 }
 
 /** A simple visual for a store: missiles are slim with fins, pods are fat tubes, bombs are teardrops. Nose toward -Z. */
-export function weaponMesh(def: StoreDef, mats: JetMaterials): Group {
+export function weaponMesh(def: StoreDef, _mats?: JetMaterials, onPylon = false): Group {
   const g = new Group();
-  const geo = weaponGeometry(def);
-  if (geo.white) g.add(new Mesh(geo.white, mats.strut));
-  if (geo.dark) g.add(new Mesh(geo.dark, mats.dark));
+  const wg = weaponGeometry(def);
+  const geo = onPylon ? wg.pylon : wg.geo;
+  if (!storeMaterial) storeMaterial = new MeshStandardMaterial({ vertexColors: true, metalness: 0.7, roughness: 0.42 });
+  g.add(new Mesh(geo, storeMaterial));
   return g;
 }
 
