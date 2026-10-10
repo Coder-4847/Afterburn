@@ -149,6 +149,8 @@ export interface MapDef {
   designScale?: number;
   /** Short label for menus. */
   tagline?: string;
+  /** Built for one game mode only: it is not offered in the map list of the others (and that mode always uses it). */
+  exclusive?: 'carrier';
   /** Half-extent of the combat zone (m). Leaving it starts the return-to-combat countdown. */
   boundary: number;
   /** Default start for free flight: position, heading (deg), altitude. */

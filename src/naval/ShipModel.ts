@@ -201,8 +201,10 @@ export function buildShip(kind: ShipKind, team: Team, teamHex: number): Group {
       b.box(M.dark, 2.6, 2.6, 0.5, x - 6, d.top + 2.2, z, h);
       b.box(M.glass, 3, 0.9, 1.4, x + 3, d.top + 1.9, z, h);
     };
-    for (let i = 0; i < 5; i++) park(-L * 0.38 + i * 28, -B * 0.1 + (i % 2) * 6, 0.2 + (i % 3) * 0.05);
-    for (let i = 0; i < 3; i++) park(L * 0.28 + i * 24, B * 0.3, 0.25);
+    // (the stern lane, where the player spawns and lands, and the centre line stay clear)
+    for (let i = 0; i < 5; i++) park(-L * 0.3 + i * 30, -B * 0.37, 0.12 + (i % 3) * 0.04);
+    for (let i = 0; i < 3; i++) park(L * 0.16 + i * 26, -B * 0.37, 0.1);
+    for (let i = 0; i < 2; i++) park(L * 0.3 + i * 24, B * 0.36, -0.1);
     const g = b.build();
     g.add(deck);
     return g;

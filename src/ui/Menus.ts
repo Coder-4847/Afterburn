@@ -1,7 +1,7 @@
 import { ACTION_LABELS, DEFAULT_BINDINGS, codeLabel, type Action, type Input } from '../core/Input';
 import type { DifficultyId, QualitySetting, Settings, SettingsStore } from '../core/Settings';
 import { DIFFICULTIES } from '../data/difficulty';
-import { MAPS, MAP_LIST } from '../data/maps';
+import { FREE_MAPS, MAPS, MAP_LIST, mapIdFor } from '../data/maps';
 import { SKILLS } from '../ai/Pilot';
 import { renderScoreboard, type ScoreData } from './Scoreboard';
 
@@ -130,7 +130,7 @@ export class Menus {
     const p = el('div', 'panel wide', o);
     el('p', 'brand', p, 'AFTERBURN');
     const s = this.settings.value;
-    const map = MAPS[s.mapId] ?? MAP_LIST[0];
+    const map = MAPS[mapIdFor(s.sortie, s.mapId)] ?? MAP_LIST[0];
     el('h1', 'title', p, 'Mission setup');
     const mode = MODES.find((m) => m.id === s.sortie) ?? MODES[0];
     el('p', 'sub', p, `${mode.name} on ${map.name}. Left mouse fires the cannon, right mouse the selected weapon. Land and stop on a Blue runway to rearm and repair.`);
@@ -141,16 +141,21 @@ export class Menus {
       this.showReady();
     });
 
-    el('div', 'section', p, 'Map');
-    this.cards(p, MAP_LIST.map((m) => ({ id: m.id, name: m.name, desc: m.tagline ?? '' })), s.mapId, (id) => {
-      this.settings.set('mapId', id);
-      this.showReady();
-    });
-    el('p', 'hint-line', p, map.description);
+    if (s.sortie === 'carrier') {
+      // Carrier Strike has its own map: nothing to choose
+      el('div', 'section', p, 'Map');
+      el('p', 'hint-line', p, `${map.name}: ${map.description}`);
+    } else {
+      el('div', 'section', p, 'Map');
+      this.cards(p, FREE_MAPS.map((m) => ({ id: m.id, name: m.name, desc: m.tagline ?? '' })), map.id, (id) => {
+        this.settings.set('mapId', id);
+        this.showReady();
+      });
+      el('p', 'hint-line', p, map.description);
+    }
 
     if (s.sortie === 'tdm' || s.sortie === 'elimination' || s.sortie === 'carrier') {
       el('div', 'section', p, 'Match');
-      if (s.sortie === 'carrier' && (map.groundPlane || map.terrain.kind === 'alpine')) el('p', 'hint-line warn', p, 'This map has no open sea: Carrier Strike will fall back to Team Deathmatch here. Pick a map with water.');
       if (s.sortie === 'carrier') this.select(p, 'Launch from', 'carrierSpawn', [['deck', 'Your carrier deck (catapult)'], ['air', 'In the air over your carrier']], undefined, 'Applies to every respawn. Press 1 (air) or 2 (carrier) on the respawn screen to change it');
       this.select(p, 'Team size', 'teamSize', [1, 2, 3, 5, 10].map((n) => [String(n), `${n} v ${n}`]), undefined, 'You count as one of your side; the rest are AI wingmen');
       if (s.sortie === 'tdm') this.select(p, 'Score limit', 'scoreLimit', [10, 20, 30, 50].map((n) => [String(n), `${n} kills`]));
@@ -192,7 +197,7 @@ export class Menus {
     el('p', 'brand', p, 'AFTERBURN');
     el('h1', 'title', p, 'Paused');
     const s = this.settings.value;
-    el('p', 'sub', p, `${(MODES.find((m) => m.id === s.sortie) ?? MODES[0]).name} · ${(MAPS[s.mapId] ?? MAP_LIST[0]).name}`);
+    el('p', 'sub', p, `${(MODES.find((m) => m.id === s.sortie) ?? MODES[0]).name} · ${(MAPS[mapIdFor(s.sortie, s.mapId)] ?? MAP_LIST[0]).name}`);
     const mk = (label: string, sub: string, fn: () => void, primary = false) => {
       const b = el('button', 'btn' + (primary ? ' primary' : ''), p);
       b.append(label);

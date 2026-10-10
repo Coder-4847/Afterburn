@@ -14,7 +14,7 @@ import { TrailEmitter } from '../aircraft/Trails';
 import { getAircraft } from '../data/aircraft';
 import { DIFFICULTIES } from '../data/difficulty';
 import { GRAVITY, STORES } from '../data/weapons';
-import { MAPS } from '../data/maps';
+import { MAPS, mapIdFor } from '../data/maps';
 import { AIM, FLIGHT, TERRAIN_ASSIST, WORLD_BOUNDARY } from '../data/tuning';
 import { MouseAim } from '../flight/MouseAim';
 import { scanTerrain, type TerrainThreat } from '../flight/TerrainAssist';
@@ -214,7 +214,7 @@ export class Game {
     // give the loading panel a moment to paint (a timer, not rAF: rAF never fires in background tabs)
     await yieldToMain();
 
-    await this.loadWorld(this.settings.value.mapId, progress);
+    await this.loadWorld(mapIdFor(this.settings.value.sortie, this.settings.value.mapId), progress);
     this.buildSortie();
     this.applyAllSettings();
 
@@ -241,7 +241,7 @@ export class Game {
   /** The part of the settings that needs the world or the aircraft rebuilt when it changes. */
   private sortieSig(): string {
     const s = this.settings.value;
-    return [s.mapId, s.sortie, s.teamSize, s.aiSkill, s.scoreLimit, s.timeLimit, s.colorblind].join('|');
+    return [mapIdFor(s.sortie, s.mapId), s.sortie, s.teamSize, s.aiSkill, s.scoreLimit, s.timeLimit, s.colorblind].join('|');
   }
 
   /** Take the sortie apart: every aircraft, the training range and the combat layer (before the world goes away). */
@@ -329,7 +329,8 @@ export class Game {
     this.hud.setVisible(false);
     const progress = this.menus.showLoading();
     await yieldToMain();
-    if (this.settings.value.mapId !== this.mapId) await this.loadWorld(this.settings.value.mapId, progress);
+    const want = mapIdFor(this.settings.value.sortie, this.settings.value.mapId);
+    if (want !== this.mapId) await this.loadWorld(want, progress);
     else {
       progress(0.4, 'Deploying aircraft');
       await yieldToMain();
