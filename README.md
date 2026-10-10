@@ -29,7 +29,7 @@ Mouse-aim is the default scheme: the mouse moves a reticle, and the aircraft ban
 | **Mouse** | Move the aim reticle (the jet follows it) |
 | **W / S** or **mouse wheel** | Throttle up / down |
 | **Space** (hold) | Afterburner |
-| **B** (hold) | Airbrake / wheel brakes |
+| **B** (hold) | Airbrake / wheel brakes (Arcade also brakes by itself on the runway once the throttle is closed) |
 | **G** | Landing gear |
 | **A / D** | Rudder left / right (the reticle follows the nose, so there is no corrective roll) |
 | **Q / E** | Manual roll (overrides the reticle while held) |
@@ -42,6 +42,7 @@ Mouse-aim is the default scheme: the mouse moves a reticle, and the aircraft ban
 | **X** (hold) | Target view: the camera swings round to keep the target in sight |
 | **M** | Full-screen map (north-up) |
 | **P** (hold) | Scoreboard |
+| **J** (hold) | Eject |
 | **V** | Camera: chase / cockpit |
 | **Z** or **middle mouse** (hold) | Look around |
 | **F3** | FPS / render stats |
@@ -57,10 +58,15 @@ so you can never bind yourself out of the menu. Bindings are saved with the othe
 ### Taking off and landing
 
 Pause > **Start on the runway**: throttle up, hold Space, pull the reticle up at about 270 km/h. To land, line up with a runway,
-lower the gear (**G**), throttle back and touch down gently. Arcade tolerates a sink rate under 9 m/s, a bank under 35 degrees
-and a touchdown speed under 540 km/h; Standard and Realistic-lite are stricter. After touchdown, hold **B** to brake.
-Landing anywhere other than a runway, or with the gear up, is a crash; you respawn after a few seconds.
-Stop on a Blue runway or apron for three seconds and you are repaired, refuelled and rearmed.
+lower the gear (**G**), throttle back and touch down. After touchdown the lift dumps and the wheel brakes (**B**; automatic in Arcade
+with the throttle closed) stop you.
+
+Landings are graded rather than pass/fail. Within the difficulty's limits (sink rate, speed, bank, pitch) it is a **good landing**.
+Past them, but not wildly, it is a **crash landing**: the aircraft survives with damage (the gear breaks first, then the airframe,
+engines and wings in proportion to how hard it was). A gear-up belly landing on a runway, or a wheels-down landing on open ground, is
+also survivable; water, or a truly violent impact, destroys the aircraft. A broken gear can't be lowered again.
+
+Stop on a Blue runway or apron and stay stopped: **10 seconds** to refuel and rearm, **20 seconds** if there is damage to repair.
 
 Arcade mode also has terrain avoidance: **PULL UP** warns, then an auto pull-up takes over when impact is imminent.
 
@@ -124,6 +130,11 @@ Terrain is generated per map from a seed (`src/world/generators`: `archipelago`,
   pilot). When a team reaches the score limit, or the clock runs out (most kills wins, equal is a draw), the results screen shows
   the winner and the final table, with **Rematch**, **Mission setup** and **Hangar**. Everyone respawns near their own airstrips a few
   seconds after dying.
+- **Last Stand**: 1v1 up to 10v10, **three lives each** (three spawns). Every aircraft destroyed with its pilot aboard costs a life. The
+  first team with no pilots left loses. When you are out of lives you spectate (Tab switches the view) until the match is decided.
+  **Eject** (hold **J**, about one second) when the aircraft is doomed: the pilot gets out with a chance that depends on height,
+  speed and attitude (very low or inverted is bad, about 90% in calm flight at height). A pilot who gets out keeps the life; one who
+  does not loses it like any other kill. Ejecting from a falling wreck can also win the life back.
 - **Training Range**: target balloons dead ahead, a ground-target site and three Red drones that evade (or, set to *Hostile*, hunt you).
 - **Free Flight**: an empty sky for practising takeoffs, landings and aerobatics.
 
@@ -184,8 +195,9 @@ aircraft) shows a lead pipper on the selected target; bombs show a CCIP impact m
 - **Rocket pods** ripple while the right button is held. **Bombs** are unguided, or laser-guided if you hold a lock on a ground target.
 - Missiles use proportional navigation with real G and speed limits, so a missile that is out of energy cannot catch a hard turn.
 
-**Damage** is per module, War Thunder style: cockpit (pilot), engines, fuel tanks, wings, tail and fuselage, each with hit boxes and
-hit points. Cannon rounds hit the module they strike; explosions damage everything in range. Lost wings roll you off, a hurt tail
+**Damage** is per module, War Thunder style: cockpit (pilot), engines, fuel tanks, wings, tail, landing gear and fuselage, each
+with hit boxes and hit points. The HUD lists what is damaged and what it does to you (for example "ENGINE 40% · thrust 52%",
+"LEFT WING 30% · lift and roll reduced"). One explosion cannot destroy a healthy airframe on its own: parts fail first. Cannon rounds hit the module they strike; explosions damage everything in range. Lost wings roll you off, a hurt tail
 wobbles the nose and weakens control, engines lose thrust and burn, fuel leaks drain you (BINGO at 20%) and can ignite. Fires burn the
 fuselage until they go out, and speed helps put them out. The HUD shows a damage silhouette. A destroyed aircraft tumbles, burning,
 until it hits the ground; wings and tail can be ripped off as flaming debris.

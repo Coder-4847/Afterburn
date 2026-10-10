@@ -27,6 +27,10 @@ export class MouseAim {
   /** World-space unit vector the pilot is aiming at. */
   aim = new Vector3(0, 0, -1);
   private pushMode = false;
+  /** The biggest recent aim error (rad): the bank allowance falls off slowly behind it, so a turn is finished at speed. */
+  private errPeak = 0;
+  /** Which way to turn when the aim point is directly behind us (kept between frames so it never flip-flops). */
+  private turnSide = 1;
 
   /** Reset to the aircraft's nose (spawn, respawn, assist hand-off). */
   snapTo(fm: FlightModel): void {
@@ -65,6 +69,13 @@ export class MouseAim {
     _a.copy(this.aim).applyQuaternion(_qi.copy(fm.quat).invert());
     // feed-forward: hold the nose a little above the aim so the *flight path* ends up on it
     _a.applyAxisAngle(_x, Math.min(fm.trimAoa * AIM.trimGain, AIM.trimMax));
+    // an aim point behind us: turn level toward whichever side it is on, instead of pulling up and over the top
+    if (_a.z > 0.15) {
+      if (Math.abs(_a.x) > 0.05) this.turnSide = Math.sign(_a.x);
+      if (!(_a.y > 0.45 && _a.y > Math.abs(_a.x) * 1.4)) {
+        _a.set(this.turnSide * 0.93, clamp(_a.y, -0.25, 0.25), -0.25).normalize();
+      }
+    }
     const th = Math.acos(clamp(-_a.z, -1, 1)); // total angle between nose and aim
     const behind = _a.z > 0;
 
@@ -96,7 +107,8 @@ export class MouseAim {
 
     // a small correction must not snap the jet onto its side: allow only as much bank as the angle to the aim point earns
     // (see AIM.bankBase / bankGain: a small correction banks less than a big one, up to the difficulty limit)
-    const maxBank = Math.min(diff.maxBank, AIM.bankBase + AIM.bankGain * th);
+    this.errPeak = Math.max(th, this.errPeak - AIM.errDecay * (1 / 60));
+    const maxBank = diff.maxBank * clamp(Math.pow(Math.max(th, this.errPeak * 0.85) / AIM.bankRef, AIM.bankExp), AIM.bankMin, 1);
     // bank limit: in a level-ish turn, stop rolling past the limit (otherwise lift cannot also hold the weight up)
     const aimElev = Math.asin(clamp(this.aim.y, -1, 1));
     const noseElev = Math.asin(clamp(_fwd.y, -1, 1));

@@ -16,6 +16,10 @@ export interface DifficultyDef {
   gMul: number;
   /** Multiplier on lift. */
   liftMul: number;
+  /** rad/s of heading change per unit of rudder, added on top of the aerodynamic turn (small corrections without banking). */
+  flatTurn: number;
+  /** Multiplier on the angle of attack the limiter allows (more G in a hard turn). */
+  aoaHeadroom: number;
   /** Multiplier on all damage the player takes (Arcade is forgiving, Realistic is not). */
   damageTaken: number;
   /** 0..1: how strongly cannon rounds are steered onto a selected target that is close to the gun line. */
@@ -39,14 +43,16 @@ export const DIFFICULTIES: Record<DifficultyId, DifficultyDef> = {
     aoaLimiter: 0.95,
     maxBank: 84 * Math.PI / 180,
     stallRecovery: 1.3,
-    gMul: 1.28,
+    gMul: 2.0,
     liftMul: 1.1,
+    flatTurn: 0.32,
+    aoaHeadroom: 1.3,
     damageTaken: 0.35,
     aimAssist: 0.85,
     lockSpeed: 2.2,
     autoCountermeasures: true,
     terrainAssist: 'auto',
-    landing: { sink: 9, roll: 35 * Math.PI / 180, speed: 150, pitchMin: -6 * Math.PI / 180, pitchMax: 22 * Math.PI / 180 },
+    landing: { sink: 12, roll: 40 * Math.PI / 180, speed: 175, pitchMin: -8 * Math.PI / 180, pitchMax: 24 * Math.PI / 180 },
   },
   standard: {
     id: 'standard',
@@ -56,14 +62,16 @@ export const DIFFICULTIES: Record<DifficultyId, DifficultyDef> = {
     aoaLimiter: 0.65,
     maxBank: 86 * Math.PI / 180,
     stallRecovery: 1,
-    gMul: 1.12,
+    gMul: 1.5,
     liftMul: 1,
+    flatTurn: 0.18,
+    aoaHeadroom: 1.12,
     damageTaken: 0.7,
     aimAssist: 0.5,
     lockSpeed: 1.4,
     autoCountermeasures: false,
     terrainAssist: 'warn',
-    landing: { sink: 6, roll: 20 * Math.PI / 180, speed: 125, pitchMin: -3 * Math.PI / 180, pitchMax: 18 * Math.PI / 180 },
+    landing: { sink: 8, roll: 25 * Math.PI / 180, speed: 145, pitchMin: -4 * Math.PI / 180, pitchMax: 20 * Math.PI / 180 },
   },
   realistic: {
     id: 'realistic',
@@ -75,6 +83,8 @@ export const DIFFICULTIES: Record<DifficultyId, DifficultyDef> = {
     stallRecovery: 0.75,
     gMul: 1,
     liftMul: 1,
+    flatTurn: 0,
+    aoaHeadroom: 1,
     damageTaken: 1,
     aimAssist: 0,
     lockSpeed: 1,

@@ -6,6 +6,8 @@ export interface MatchConfig {
   /** Seconds, 0 = no limit. */
   timeLimit: number;
   teamSize: number;
+  /** Last Stand: lives per pilot (0 = not a lives match). The match is decided by who is left, not by a kill count. */
+  lives?: number;
 }
 
 export type Winner = Team | 'draw';
@@ -26,9 +28,19 @@ export class Match {
 
   /** A fighter was destroyed. Only kills against the other team score; crashes and friendly losses do not. */
   onKill(killer: Team | null, victim: Team): void {
-    if (this.over || !killer || killer === victim) return;
+    if (this.over || !killer || killer === victim || this.cfg.lives) return;
     this.score[killer]++;
     if (this.score[killer] >= this.cfg.scoreLimit) this.finish(killer, `${killer === 'blue' ? 'Blue' : 'Red'} reached ${this.cfg.scoreLimit} kills`);
+  }
+
+  /** Last Stand: how many pilots each team still has in the fight (flying, or with a life to spawn with). */
+  setRemaining(blue: number, red: number): void {
+    if (this.over || !this.cfg.lives) return;
+    this.score.blue = blue;
+    this.score.red = red;
+    if (blue === 0 && red === 0) this.finish('draw', 'Both teams were wiped out');
+    else if (blue === 0) this.finish('red', 'Blue team eliminated');
+    else if (red === 0) this.finish('blue', 'Red team eliminated');
   }
 
   update(dt: number): void {

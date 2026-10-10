@@ -57,6 +57,10 @@ export class Fighter implements Target, Attacker {
   /** 0..1 gun aim assist and a multiplier on lock speed (set from the player's difficulty). */
   aimAssist = 0;
   lockSpeed = 1;
+  /** Lives left (Infinity outside Last Stand). Spent when the aircraft is destroyed with the pilot aboard. */
+  lives = Infinity;
+  /** The last landing damaged the aircraft: servicing takes longer. */
+  crashLanded = false;
   /** Seconds since the last time this fighter was hit (HUD flash, AI reactions). */
   sinceHit = 99;
   /** For debris and effects: the part groups that are currently gone. */
@@ -185,7 +189,9 @@ export class Fighter implements Target, Attacker {
       const d = _a.distanceTo(point) - 1.2;
       if (d >= radius) continue;
       const k = Math.pow(1 - clamp(d / radius, 0, 1), 1.4);
-      const amt = warhead * k * m.blastWeight * (0.85 + Math.random() * 0.3) * this.damageScale;
+      let amt = warhead * k * m.blastWeight * (0.85 + Math.random() * 0.3) * this.damageScale;
+      // one explosion hurts the airframe badly but cannot, on its own, tear a healthy fuselage apart: parts fail first
+      if (m.kind === 'fuselage') amt = Math.min(amt, m.max * 0.6);
       if (amt <= 0.2) continue;
       total += amt;
       all.push(...this.damage.damage(m, amt));
@@ -268,6 +274,33 @@ export class Fighter implements Target, Attacker {
     return true;
   }
 
+  /** Is there structural damage (as opposed to just empty weapons and tanks)? */
+  needsRepair(): boolean {
+    return this.crashLanded || this.damage.fire > 0 || this.damage.leaking || this.damage.modules.some((m) => m.gone || m.hp < m.max - 0.01);
+  }
+
+  /**
+   * A hard landing, belly landing or off-runway touchdown that did not destroy the aircraft: it breaks things in proportion
+   * to how far past the landing limits it was. Severity 1 is exactly at the limit of a clean landing.
+   */
+  landingDamage(severity: number, belly: boolean, rough: boolean): void {
+    if (this.state !== 'alive') return;
+    const amount = Math.min(0.85, Math.max(0.08, 0.1 + (severity - 0.9) * 0.45 + (belly ? 0.08 : 0) + (rough ? 0.06 : 0)));
+    const hit = (id: string, k: number): DamageEvent[] => {
+      const m = this.damage.get(id);
+      return m.gone ? [] : this.damage.damage(m, m.max * amount * k);
+    };
+    const ev: DamageEvent[] = [];
+    // the gear goes first: it is what takes the impact (always, when it was a belly landing or a heavy one)
+    if (belly || severity > 1.15) ev.push(...this.damage.damage(this.damage.get('gear'), this.damage.get('gear').max * 2));
+    ev.push(...hit('fuselage', 0.55));
+    for (const e of this.damage.byKind('engine')) ev.push(...hit(e.id, belly ? 0.55 : 0.3));
+    ev.push(...hit('wingL', 0.3), ...hit('wingR', 0.3), ...hit('fuel', 0.35));
+    this.crashLanded = true;
+    this.sinceHit = 0;
+    if (ev.length) this.hooks?.damageEvents(this, ev, null, 'Crash landing');
+  }
+
   /** Does anything need repairing, refuelling or reloading? */
   needsService(): boolean {
     const w = this.weapons;
@@ -285,6 +318,7 @@ export class Fighter implements Target, Attacker {
 
   /** Repair, refuel and rearm without touching position or life state (landing on a friendly runway). */
   service(): void {
+    this.crashLanded = false;
     this.damage.repair();
     this.weapons.rearm();
     this.hidden.clear();
@@ -296,6 +330,7 @@ export class Fighter implements Target, Attacker {
   reset(): void {
     this.service();
     this.state = 'alive';
+    this.crashLanded = false;
     this.recent.clear();
     this.lastHit = null;
     this.aircraft.flight.wreck = false;

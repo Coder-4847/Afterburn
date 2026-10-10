@@ -47,6 +47,8 @@ export interface CombatHud {
   numbers: { pos: Vector3; text: string; age: number; kill: boolean }[];
   kills: number;
   deaths: number;
+  /** What is damaged and what that does to the aircraft (worst first). */
+  report: { label: string; ratio: number; effect: string }[];
   /** Hostile aircraft within radar range, nearest first. */
   contacts: { pos: Vector3; dist: number; selected: boolean }[];
   /** Where the nearest enemy is, relative to our nose. */
@@ -80,6 +82,8 @@ export class CombatHudLayer {
   private fuelFill: HTMLElement;
   private fuelV: HTMLElement;
   private score: HTMLElement;
+  private dmg: HTMLElement;
+  private dmgRows: HTMLElement[] = [];
   private feed: HTMLElement;
   private hurt: HTMLElement;
   private cache = new Map<HTMLElement, string>();
@@ -108,6 +112,8 @@ export class CombatHudLayer {
     this.fuelFill = el('i', '', bar);
     this.fuelV = el('b', '', fr, '');
     this.score = el('div', 'hud-score', root);
+    this.dmg = el('div', 'dmg-list', root);
+    for (let i = 0; i < 4; i++) this.dmgRows.push(el('div', 'dmg-row', this.dmg));
     this.feed = el('div', 'feed', root);
     for (let i = 0; i < 5; i++) this.lines.push(el('div', 'feed-line', this.feed));
   }
@@ -159,6 +165,16 @@ export class CombatHudLayer {
     this.set(this.fuelV, d.bingo ? 'BINGO' : Math.round(d.fuel * 100) + '%');
     this.fuelV.classList.toggle('low', d.bingo);
     this.set(this.score, `KILLS ${d.kills}   DEATHS ${d.deaths}`);
+    this.dmg.style.display = d.report.length ? '' : 'none';
+    this.dmgRows.forEach((row, i) => {
+      const r = d.report[i];
+      if (!r) {
+        this.set(row, '');
+        return;
+      }
+      this.set(row, `${r.label.toUpperCase()}  ${Math.round(r.ratio * 100)}%  ·  ${r.effect}`);
+      row.className = 'dmg-row ' + (r.ratio <= 0.01 ? 'out' : r.ratio < 0.5 ? 'bad' : 'warn');
+    });
     d.feed.forEach((f, i) => {
       const l = this.lines[i];
       if (!l) return;

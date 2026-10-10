@@ -4,7 +4,7 @@ import { secAt } from '../aircraft/ProceduralJet';
 import type { FlightMods } from '../flight/FlightModel';
 import { clamp } from '../core/math';
 
-export type ModuleKind = 'fuselage' | 'cockpit' | 'engine' | 'fuel' | 'wingL' | 'wingR' | 'tail';
+export type ModuleKind = 'fuselage' | 'cockpit' | 'engine' | 'fuel' | 'wingL' | 'wingR' | 'tail' | 'gear';
 
 export interface Box {
   min: Vector3;
@@ -33,6 +33,7 @@ export type DamageEvent =
   | { type: 'rip'; part: 'wingL' | 'wingR' | 'tail' }
   | { type: 'engine-fire'; engine: number }
   | { type: 'leak' }
+  | { type: 'gear-lost' }
   | { type: 'fire' }
   | { type: 'extinguished' }
   | { type: 'pilot-killed' }
@@ -86,7 +87,7 @@ export class DamageModel {
     const cz = zAt(m.canopyZ);
     const clen = (m.canopyLen ?? 2) * 0.8;
     const sec = secAt(m, m.canopyZ);
-    add('cockpit', 'cockpit', 'Cockpit', 0.28, [box(-0.6, sec.yc + sec.hh - 0.7, cz - 0.3, 0.6, sec.yc + sec.hh + 0.55, cz + clen * 1.3)], 0, 0.4);
+    add('cockpit', 'cockpit', 'Cockpit', 0.28, [box(-0.6, sec.yc + sec.hh - 0.7, cz - 0.3, 0.6, sec.yc + sec.hh + 0.55, cz + clen * 1.3)], 0, 0.15);
 
     // engines at the tail
     const ex = m.engines === 1 ? [0] : [-(m.engineSpacing ?? 0.7), m.engineSpacing ?? 0.7];
@@ -128,6 +129,9 @@ export class DamageModel {
     if (bs.length === 0) bs.push(box(-1, -0.5, zAt(0.85), 1, 0.8, L / 2));
     add('tail', 'tail', 'Tail', 0.5, bs, 4, 0.7);
 
+    // landing gear: low under the fuselage, so shots from below and hard landings can break it
+    add('gear', 'gear', 'Landing gear', 0.2, [box(-wide * 0.9, low - 0.9, zAt(0.2), wide * 0.9, low + 0.15, zAt(0.68))], 4, 0.35);
+
     // fuselage: everything else
     add('fuselage', 'fuselage', 'Fuselage', 1.0, [box(-wide, low, zAt(0.06), wide, high, zAt(0.9))], 5, 1.1);
   }
@@ -144,6 +148,28 @@ export class DamageModel {
   ratio(id: string): number {
     const m = this.get(id);
     return m.gone ? 0 : clamp(m.hp / m.max, 0, 1);
+  }
+
+  /** What is wrong, in words and effects, worst first (for the HUD damage list). */
+  report(): { label: string; ratio: number; effect: string }[] {
+    const out: { label: string; ratio: number; effect: string }[] = [];
+    for (const m of this.modules) {
+      const r = m.gone ? 0 : clamp(m.hp / m.max, 0, 1);
+      if (r > 0.92 && !m.gone) continue;
+      let effect = '';
+      switch (m.kind) {
+        case 'engine': effect = r <= 0 ? 'engine out' : `thrust ${Math.round(Math.pow(r, 0.7) * 100)}%`; break;
+        case 'wingL':
+        case 'wingR': effect = m.gone ? 'wing lost' : 'lift and roll reduced'; break;
+        case 'tail': effect = m.gone ? 'tail lost' : 'pitch and yaw reduced'; break;
+        case 'gear': effect = m.gone ? 'belly landing only' : 'gear weakened'; break;
+        case 'fuel': effect = this.leaking ? 'leaking' : 'tank damaged'; break;
+        case 'cockpit': effect = 'canopy damaged'; break;
+        case 'fuselage': effect = 'structure weakened'; break;
+      }
+      out.push({ label: m.label, ratio: r, effect });
+    }
+    return out.sort((a, b) => a.ratio - b.ratio);
   }
 
   /** Overall condition for the target box / HUD, weighting what actually keeps you flying. */
@@ -174,6 +200,11 @@ export class DamageModel {
       m.gone = true;
       m.hp = 0;
       ev.push({ type: 'rip', part: m.kind });
+    }
+    if (m.kind === 'gear' && m.hp <= 0 && !m.gone) {
+      m.gone = true;
+      m.hp = 0;
+      ev.push({ type: 'gear-lost' });
     }
     if (m.kind === 'engine') {
       const after = Math.max(0, m.hp) / m.max;
@@ -226,7 +257,8 @@ export class DamageModel {
       if (this.extinguishTimer >= 1) {
         this.extinguishTimer = 0;
         // speed blows fires out; a screaming dive is the classic fix
-        const p = 0.07 + 0.5 * clamp((speed - 200) / 260, 0, 1);
+        // (and once the aircraft is down and stopped, the fire crews put it out)
+        const p = speed < 8 ? 0.7 : 0.07 + 0.5 * clamp((speed - 200) / 260, 0, 1);
         if (this.rng() < p) {
           this.fire = 0;
           ev.push({ type: 'extinguished' });
@@ -254,6 +286,9 @@ export class DamageModel {
     mods.roll = 0.3 + 0.7 * Math.min(wl, wr);
     mods.rollDrift = ((1 - wr) - (1 - wl)) * 1.0; // a hurt left wing rolls you left (negative)
     mods.wobble = (1 - tail) * 0.22 + (this.get('tail').gone ? 0.12 : 0);
+    // damaged wings flex: the structure cannot take the same G, so the jet turns slower even at the stick stops
+    mods.gLimit = 0.5 + 0.5 * Math.min(wl, wr) * 0.6 + 0.5 * ((wl + wr) / 2) * 0.4;
+    mods.gearBroken = this.get('gear').gone;
   }
 
   repair(): void {

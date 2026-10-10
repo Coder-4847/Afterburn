@@ -40,6 +40,11 @@ import { SettingsStore, type QualityLevel, type Settings } from './Settings';
 type GameState = 'loading' | 'ready' | 'playing' | 'paused' | 'hangar' | 'results';
 
 const TEAM_BLUE = 0x3aa0ff;
+/** Lives per pilot in Last Stand. */
+const LIVES = 3;
+/** Seconds stopped on a friendly apron: refuel and rearm, or repair as well. */
+const SERVICE_REARM = 10;
+const SERVICE_REPAIR = 20;
 const _fwd = new Vector3();
 const _vel = new Vector3();
 const _tmp = new Vector3();
@@ -272,11 +277,15 @@ export class Game {
     this.setAircraft(s.aircraftId, true);
     this.fighter.stats = { kills: 0, assists: 0, deaths: 0, shots: 0, hits: 0, damage: 0 };
     if (s.sortie === 'training') this.range.build(s.drones === 'hostile', this.world.map);
-    else if (s.sortie === 'tdm') {
+    else if (s.sortie === 'tdm' || s.sortie === 'elimination') {
       this.skirmish = new Skirmish(this.combat, this.world.scene, this.smoke, this.world.map, s.aiSkill);
       this.skirmish.build(s.teamSize - 1, s.teamSize);
-      this.match = new Match({ scoreLimit: s.scoreLimit, timeLimit: s.timeLimit * 60, teamSize: s.teamSize });
+      const lives = s.sortie === 'elimination' ? LIVES : 0;
+      this.match = new Match({ scoreLimit: s.scoreLimit, timeLimit: s.sortie === 'tdm' ? s.timeLimit * 60 : 0, teamSize: s.teamSize, lives });
+      if (lives) for (const f of this.combat.fighters) f.lives = lives;
     }
+    this.spectating = false;
+    this.ejected = null;
     this.feed = [];
     this.numbers = [];
     this.hud.minimap.setMap(this.world.map, this.world.heightmap);
@@ -331,6 +340,7 @@ export class Game {
       case 'fov': this.rig.baseFov = s.fov; break;
       case 'timeOfDay': this.world?.setTimeOfDay(s.timeOfDay); break;
       case 'difficulty':
+        this.hud.options = { ...this.hud.options, gVignette: s.difficulty === 'arcade' ? 0.25 : s.difficulty === 'standard' ? 0.6 : 1 };
         if (this.player) this.player.flight.difficulty = DIFFICULTIES[s.difficulty];
         if (this.fighter) this.applyAssists();
         break;
@@ -349,7 +359,7 @@ export class Game {
       case 'drones': this.range?.setHostile(s.drones === 'hostile'); break;
       default: break;
     }
-    this.hud.options = { unit: s.speedUnit, ladder: s.hudPitchLadder, tape: s.hudHeadingTape, flightPath: s.hudFlightPath, contrast: s.highContrast, reduceMotion: s.reduceMotion, scale: s.hudScale };
+    this.hud.options = { unit: s.speedUnit, ladder: s.hudPitchLadder, tape: s.hudHeadingTape, flightPath: s.hudFlightPath, contrast: s.highContrast, reduceMotion: s.reduceMotion, scale: s.hudScale, gVignette: s.difficulty === 'arcade' ? 0.25 : s.difficulty === 'standard' ? 0.6 : 1 };
     if (key === 'showFps' && !silent) this.fpsText = '';
   }
 
@@ -437,7 +447,9 @@ export class Game {
     void p.loadOverride(); // swaps in public/models/<id>.glb if one exists
     if (this.fighter) this.combat.removeFighter(this.fighter);
     const prev = this.fighter?.stats;
+    const prevLives = this.fighter?.lives;
     this.fighter = new Fighter('You', 'blue', p, true);
+    if (prevLives !== undefined && this.match?.cfg.lives) this.fighter.lives = prevLives;
     this.applyAssists();
     if (prev) this.fighter.stats = prev;
     this.combat.addFighter(this.fighter);
@@ -454,6 +466,7 @@ export class Game {
     this.fighter.lockSpeed = d.lockSpeed;
   }
 
+  private brakeHinted = false;
   private autoCmTimer = 0;
   private autoTargetTimer = 0;
 
@@ -540,7 +553,7 @@ export class Game {
   private spawnPoint(): { x: number; z: number; heading: number; altitude: number; speed: number } {
     const map = this.world.map;
     const sp = map.spawn;
-    if (this.settings.value.sortie === 'tdm' && this.skirmish) {
+    if (this.skirmish) {
       const strip = map.airstrips.find((a) => a.team === 'blue');
       if (strip) {
         return {
@@ -630,7 +643,67 @@ export class Game {
     const reason = cr.killer ? `${cr.killer.name}  ·  ${cr.weapon || fg.damage.deathReason}` : fg.damage.deathReason || 'Destroyed';
     this.crashTimer = fg.state === 'wreck' ? 6 : 3.4;
     this.rig.addShake(1);
-    this.menus.showCrash(title, reason, 'Respawning in 6');
+    this.menus.showCrash(title, reason, this.livesNote() || 'Respawning in 6');
+  }
+
+  private livesNote(): string {
+    const fg = this.fighter;
+    if (!this.match?.cfg.lives) return '';
+    return fg.lives > 0 ? `${fg.lives} ${fg.lives === 1 ? 'life' : 'lives'} left` : 'no lives left';
+  }
+
+  // ---- eject -----------------------------------------------------------------------------------
+
+  private ejectHold = 0;
+  private ejected: { survived: boolean } | null = null;
+
+  private processEject(dt: number): void {
+    const fg = this.fighter;
+    const can = (fg.state === 'alive' || fg.state === 'wreck') && fg.damage.pilotAlive && !this.ejected && !this.spectating;
+    if (!(can && this.input.isDown('eject'))) {
+      this.ejectHold = 0;
+      return;
+    }
+    this.ejectHold += dt;
+    if (this.ejectHold < 0.9) {
+      this.say('EJECTING' + '.'.repeat(1 + Math.floor(this.ejectHold * 4)), 0.3);
+      return;
+    }
+    this.ejectNow();
+  }
+
+  /** Chance the pilot gets out in one piece: height, speed, attitude and the state of the aircraft all matter. */
+  private ejectChance(): number {
+    const f = this.player.flight;
+    f.upVec(_h1);
+    let p = 0.92;
+    if (f.grounded && f.speed < 30) p = 0.99;
+    else if (f.agl < 40) p = 0.1;
+    else if (f.agl < 120) p = 0.4;
+    else if (f.agl < 250) p = 0.72;
+    if (f.speed > 330) p -= 0.22;
+    else if (f.speed > 260) p -= 0.08;
+    if (_h1.y < -0.3) p -= f.agl < 400 ? 0.3 : 0.1; // upside down and low: the seat fires into the ground
+    if (this.fighter.state === 'wreck') p -= 0.12; // tumbling
+    return clamp(p, 0.05, 0.97);
+  }
+
+  private ejectNow(): void {
+    const fg = this.fighter;
+    const p = this.ejectChance();
+    const survived = Math.random() < p;
+    const wasWreck = fg.state === 'wreck';
+    this.ejected = { survived };
+    this.combat.ejectFighter(fg, survived);
+    if (wasWreck && survived) {
+      // the aircraft was already lost (and the life spent): getting out of it gives the life back
+      if (Number.isFinite(fg.lives)) fg.lives++;
+      fg.stats.deaths = Math.max(0, fg.stats.deaths - 1);
+    }
+    this.crashed = true;
+    this.crashTimer = 4.5;
+    this.audio.beep(900, 0.15, 0.25);
+    this.menus.showCrash(survived ? 'EJECTED' : 'EJECTION FAILED', survived ? 'Pilot recovered  ·  aircraft lost' : 'The pilot did not survive', this.livesNote() || 'Respawning in 4');
   }
 
   /** Fireball and smoke on impact (or a white splash if we hit the sea). */
@@ -732,7 +805,7 @@ export class Game {
     this.range.render(this.alpha, dt, this.quality.trails);
     this.skirmish?.render(this.alpha, dt, this.quality.trails);
     if (this.state === 'playing') this.updateAudio(dt);
-    this.world.update(dt, this.rig.camera, p.object.position);
+    this.world.update(dt, this.rig.camera, this.spectating ? this.viewAircraft().object.position : p.object.position);
     // particles: contrails / vortices follow the aircraft, then everything integrates and is sized for this view
     if (dt > 0 && !this.crashed) this.trails.update(p, this.quality.trails);
     const h = this.renderer.drawingHeight;
@@ -766,7 +839,7 @@ export class Game {
   }
 
   private rigTarget() {
-    const p = this.player;
+    const p = this.viewAircraft();
     const def = p.def;
     const cf = cameraFor(def);
     return {
@@ -798,9 +871,14 @@ export class Game {
       this.say(this.rig.mode === 'chase' ? 'CHASE VIEW' : 'COCKPIT VIEW', 1.4);
     }
     if (inp.pressed('gear') && !this.crashed) {
-      c.gearDown = !c.gearDown;
-      this.say(c.gearDown ? 'GEAR DOWN' : 'GEAR UP', 1.4);
+      if (this.fighter.damage.get('gear').gone) this.say('LANDING GEAR DESTROYED  ·  BELLY LANDING ONLY', 2);
+      else {
+        c.gearDown = !c.gearDown;
+        this.say(c.gearDown ? 'GEAR DOWN' : 'GEAR UP', 1.4);
+      }
     }
+    if (this.spectating && inp.pressed('cycleTarget')) this.specIndex++;
+    this.processEject(dt);
     this.processWeaponInput();
 
     // throttle: keys + wheel. The alternate scheme puts throttle on W/S.
@@ -858,7 +936,20 @@ export class Game {
 
       f.step(dt, c, this.world);
 
-      if (f.touchdown) { this.say('TOUCHDOWN', 2); this.rig.addShake(0.35); }
+      if (f.touchdown) { this.say('GOOD LANDING', 2); this.rig.addShake(0.35); }
+      if (f.impact) {
+        const im = f.impact;
+        fg.landingDamage(im.severity, im.belly, im.rough);
+        this.rig.addShake(0.5 + Math.min(0.8, im.severity * 0.3));
+        this.audio.hit(f.pos);
+        this.say(im.belly ? 'BELLY LANDING  ·  AIRCRAFT DAMAGED' : im.rough ? 'ROUGH FIELD LANDING  ·  AIRCRAFT DAMAGED' : 'HARD LANDING  ·  AIRCRAFT DAMAGED', 3);
+      }
+      // a reminder that there are brakes, once per landing roll
+      if (f.grounded && f.speed > 25 && !c.airbrake && !this.brakeHinted && this.distToStrip() < 600) {
+        this.brakeHinted = true;
+        this.say(`${this.input.codes('airbrake').map(codeLabel).join('/')}  =  WHEEL BRAKES`, 2.5);
+      }
+      if (!f.grounded) this.brakeHinted = false;
       if (f.crashed) this.crash(f.crashed);
       this.checkBoundary(dt);
       this.checkService(dt);
@@ -873,6 +964,12 @@ export class Game {
     this.range.update();
     this.skirmish?.update();
     if (this.match) {
+      if (this.match.cfg.lives) {
+        let b = 0;
+        let r = 0;
+        for (const f of this.combat.fighters) if (f.alive || f.lives > 0) (f.team === 'blue' ? b++ : r++);
+        this.match.setRemaining(b, r);
+      }
       if (!this.match.over) this.match.update(dt);
       if (this.match.over && this.state !== 'results') this.endMatch();
     }
@@ -931,8 +1028,46 @@ export class Game {
   private updateCrash(dt: number): void {
     if (!this.crashed) return;
     this.crashTimer -= dt;
-    this.menus.updateCrash(`Respawning in ${Math.max(0, Math.ceil(this.crashTimer))}`);
-    if (this.crashTimer <= 0) this.spawnAir();
+    if (this.spectating) {
+      const m = this.match;
+      this.menus.updateCrash(m ? `Blue ${m.score.blue} pilots  ·  Red ${m.score.red} pilots  ·  ${this.input.codes('cycleTarget').map(codeLabel).join('/')} switches view` : '');
+      return;
+    }
+    const note = this.livesNote();
+    this.menus.updateCrash(`${note ? note + '  ·  ' : ''}Respawning in ${Math.max(0, Math.ceil(this.crashTimer))}`);
+    if (this.crashTimer <= 0) {
+      if (this.match?.cfg.lives && this.fighter.lives <= 0) this.enterSpectate();
+      else {
+        this.ejected = null;
+        this.spawnAir();
+      }
+    }
+  }
+
+  // ---- spectating (out of lives) -------------------------------------------------------------
+
+  private spectating = false;
+  private specIndex = 0;
+  private specCurrent: Aircraft | null = null;
+
+  private enterSpectate(): void {
+    this.spectating = true;
+    this.ejected = null;
+    this.menus.showCrash('ELIMINATED', 'You are out of lives', '');
+  }
+
+  /** What the camera follows: the player, or (once eliminated) someone still in the fight. */
+  private viewAircraft(): Aircraft {
+    if (!this.spectating) return this.player;
+    const alive = this.combat.fighters.filter((f) => f !== this.fighter && f.alive);
+    if (alive.length === 0) return this.specCurrent ?? this.player;
+    alive.sort((a, b) => (a.team === 'blue' ? 0 : 1) - (b.team === 'blue' ? 0 : 1) || a.id - b.id);
+    const pick = alive[((this.specIndex % alive.length) + alive.length) % alive.length].aircraft;
+    if (pick !== this.specCurrent) {
+      this.specCurrent = pick;
+      this.rig.snap(pick.flight.quat);
+    }
+    return pick;
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -995,13 +1130,16 @@ export class Game {
     const near = this.world.nearestAirstrip(f.pos.x, f.pos.z);
     const apron = this.world.surfaceAt(f.pos.x, f.pos.z, _surf).onApron;
     if (near.def.team !== 'blue' || !apron) return;
-    if (this.serviceTimer < 3) {
-      const n = Math.floor(this.serviceTimer);
-      this.say(`SERVICING  ${'■'.repeat(n)}${'□'.repeat(3 - n)}`, 0.4);
+    const repair = fg.needsRepair();
+    const need = repair ? SERVICE_REPAIR : SERVICE_REARM;
+    if (this.serviceTimer < need) {
+      const left = Math.ceil(need - this.serviceTimer);
+      this.say(`${repair ? 'REPAIRING AND REARMING' : 'REARMING AND REFUELING'}  ${left} s  ·  stay stopped`, 0.4);
       return;
     }
     fg.service();
-    this.say('REARMED  ·  REFUELED  ·  REPAIRED', 3);
+    this.serviceTimer = 0;
+    this.say(repair ? 'REPAIRED  ·  REARMED  ·  REFUELED' : 'REARMED  ·  REFUELED', 3);
   }
 
   private onCombatEvent(e: CombatEvent): void {
@@ -1033,7 +1171,11 @@ export class Game {
         const mine = !!e.killer && e.killer.id === me.id;
         const theirs = e.victim === me;
         const who = e.killer ? e.killer.name : 'Crash';
-        if (this.match && 'damage' in e.victim) this.match.onKill(e.killer ? e.killer.team : null, e.victim.team);
+        if (this.match && 'damage' in e.victim) {
+          this.match.onKill(e.killer ? e.killer.team : null, e.victim.team);
+          // a destroyed aircraft with its pilot aboard costs a life in Last Stand
+          if (this.match.cfg.lives) (e.victim as Fighter).lives = Math.max(0, (e.victim as Fighter).lives - 1);
+        }
         this.feed.unshift({ text: `${who}  ▸  ${e.victim.name}  [${e.weapon}]`, age: 0, mine, theirs });
         if (this.feed.length > 5) this.feed.pop();
         if (mine) {
@@ -1043,9 +1185,16 @@ export class Game {
         }
         break;
       }
+      case 'eject': {
+        const who = e.who.name;
+        this.feed.unshift({ text: `${who}  ejected  [${e.survived ? 'pilot safe' : 'ejection failed'}]`, age: 0, mine: e.who.id === me.id && e.survived, theirs: false });
+        if (this.feed.length > 5) this.feed.pop();
+        break;
+      }
       case 'damage-events': {
         if (e.victim !== me) break;
         for (const ev of e.events) {
+          if (ev.type === 'gear-lost') this.say('LANDING GEAR DESTROYED', 2.4);
           if (ev.type === 'rip') this.say(ev.part === 'tail' ? 'TAIL LOST' : ev.part === 'wingL' ? 'LEFT WING LOST' : 'RIGHT WING LOST', 2.6);
           else if (ev.type === 'engine-fire') this.say('ENGINE FIRE', 2.4);
           else if (ev.type === 'fire') this.say('FIRE', 2.2);
@@ -1071,9 +1220,9 @@ export class Game {
     const fighters = this.combat.fighters;
     const sum = (team: 'blue' | 'red') => fighters.filter((f) => f.team === team).reduce((n, f) => n + f.stats.kills, 0);
     return {
-      title: s.sortie === 'training' ? 'TRAINING RANGE' : s.sortie === 'freeflight' ? 'FREE FLIGHT' : 'TEAM DEATHMATCH',
+      title: s.sortie === 'training' ? 'TRAINING RANGE' : s.sortie === 'freeflight' ? 'FREE FLIGHT' : s.sortie === 'elimination' ? 'LAST STAND' : 'TEAM DEATHMATCH',
       score: m ? m.score : { blue: sum('blue'), red: sum('red') },
-      info: m ? `FIRST TO ${m.cfg.scoreLimit}${m.remaining !== null ? '   ·   ' + formatClock(m.remaining) : ''}` : '',
+      info: m ? (m.cfg.lives ? 'PILOTS LEFT   ·   3 LIVES EACH' : `FIRST TO ${m.cfg.scoreLimit}${m.remaining !== null ? '   ·   ' + formatClock(m.remaining) : ''}`) : '',
       rows: fighters.map((f) => ({
         name: f.isPlayer ? 'You' : f.name,
         aircraft: f.aircraft.def.name,
@@ -1084,6 +1233,7 @@ export class Game {
         accuracy: f.stats.shots > 0 ? f.stats.hits / f.stats.shots : null,
         you: f === this.fighter,
         alive: f.state === 'alive',
+        lives: m?.cfg.lives ? Math.max(0, f.lives) : null,
       })),
     };
   }
@@ -1114,7 +1264,10 @@ export class Game {
     const keys = (a: Parameters<Input['codes']>[0]) => this.input.codes(a).map(codeLabel).join('/');
     let title: string;
     let goal: string;
-    if (s.sortie === 'tdm') {
+    if (s.sortie === 'elimination') {
+      title = 'LAST STAND';
+      goal = `Three lives each. Destroy every pilot on the RED team before they do the same to you. Ejecting (hold ${keys('eject')}) can save a life, but not always.`;
+    } else if (s.sortie === 'tdm') {
       title = 'TEAM DEATHMATCH';
       goal = `Shoot down the RED team. First side to ${s.scoreLimit} kills wins${s.timeLimit ? ' (or most kills in ' + s.timeLimit + ' min)' : ''}.`;
     } else if (s.sortie === 'training') {
@@ -1124,7 +1277,7 @@ export class Game {
       title = 'FREE FLIGHT';
       goal = 'An empty sky. Lower the gear (' + keys('gear') + ') and land on a runway to practise.';
     }
-    const find = s.sortie === 'tdm' ? 'Red markers on the HUD and the minimap show where the enemy is. The arrow at the screen edge points to the nearest one.' : 'Red markers show enemy aircraft; the minimap (top left) shows everything nearby.';
+    const find = s.sortie === 'tdm' || s.sortie === 'elimination' ? 'Red markers on the HUD and the minimap show where the enemy is. The arrow at the screen edge points to the nearest one.' : 'Red markers show enemy aircraft; the minimap (top left) shows everything nearby.';
     this.briefEl.innerHTML =
       `<b>${title}</b><span>${goal}</span><span>${find}</span>` +
       `<i>${keys('cycleTarget')} pick a target  ·  hold ${keys('fireGun')} cannon  ·  ${keys('fireMissile')} fire missile (let the ring fill first)  ·  ${keys('flares')} flares  ${keys('chaff')} chaff  ·  ${keys('map')} map</i>`;
@@ -1139,10 +1292,15 @@ export class Game {
       return;
     }
     const rem = m.remaining;
-    const text = `${m.score.blue}|${rem === null ? 'x' : formatClock(rem)}|${m.score.red}`;
+    const text = `${m.score.blue}|${rem === null ? 'x' : formatClock(rem)}|${m.score.red}|${this.fighter.lives}`;
     this.matchEl.style.display = '';
     if (text === this.matchText) return;
     this.matchText = text;
+    if (m.cfg.lives) {
+      const l = Math.max(0, this.fighter.lives);
+      this.matchEl.innerHTML = `<span class="b">${m.score.blue}</span><span class="t">${'♥'.repeat(l)}${'♡'.repeat(Math.max(0, LIVES - l))}</span><span class="r">${m.score.red}</span><span class="lim">PILOTS LEFT  ·  YOUR LIVES</span>`;
+      return;
+    }
     this.matchEl.innerHTML = `<span class="b">${m.score.blue}</span><span class="t">${rem === null ? '∞' : formatClock(rem)}</span><span class="r">${m.score.red}</span><span class="lim">FIRST TO ${m.cfg.scoreLimit}</span>`;
   }
 
@@ -1325,6 +1483,7 @@ export class Game {
     }
 
     return {
+      report: dm.report().slice(0, 4),
       contacts: contacts.slice(0, 8),
       nearest,
       group: w.group,

@@ -31,6 +31,10 @@ export interface FlightMods {
   rollDrift: number;
   /** Random body-rate noise (rad/s) from a damaged tail. */
   wobble: number;
+  /** Multiplier on the G limit (damaged wings). */
+  gLimit: number;
+  /** Landing gear destroyed: it cannot be lowered. */
+  gearBroken: boolean;
 }
 
 export interface SurfaceInfo {
@@ -117,7 +121,14 @@ export class FlightModel {
   /** AoA (rad) needed to hold 1G right now; the mouse-aim controller uses it as a feed-forward. */
   trimAoa = 0;
 
-  mods: FlightMods = { thrust: 1, lift: 1, drag: 1, pitch: 1, roll: 1, yaw: 1, rollDrift: 0, wobble: 0 };
+  mods: FlightMods = { thrust: 1, lift: 1, drag: 1, pitch: 1, roll: 1, yaw: 1, rollDrift: 0, wobble: 0, gLimit: 1, gearBroken: false };
+  /**
+   * Set for one tick when the aircraft touched down hard or off a runway but survived: how bad (1 = at the limit of a
+   * normal landing, up to ~2.2 before it is a crash), and whether it was a belly landing / on rough ground.
+   */
+  impact: { severity: number; belly: boolean; rough: boolean } | null = null;
+  /** Grounded and sliding over rough ground (speed, else 0). */
+  scrape = 0;
 
   constructor(public def: AircraftDef, public difficulty: DifficultyDef) {}
 
@@ -135,7 +146,9 @@ export class FlightModel {
     this.grounded = false;
     this.crashed = null;
     this.gLoad = 1;
-    this.mods = { thrust: 1, lift: 1, drag: 1, pitch: 1, roll: 1, yaw: 1, rollDrift: 0, wobble: 0 };
+    this.mods = { thrust: 1, lift: 1, drag: 1, pitch: 1, roll: 1, yaw: 1, rollDrift: 0, wobble: 0, gLimit: 1, gearBroken: false };
+    this.impact = null;
+    this.scrape = 0;
     this.wreck = false;
     this.wobT = 0;
   }
@@ -154,6 +167,7 @@ export class FlightModel {
     this.prevPos.copy(this.pos);
     this.prevQuat.copy(this.quat);
     this.touchdown = false;
+    this.impact = null;
     if (this.crashed) return;
     if (this.wreck) {
       this.stepWreck(dt, env);
@@ -168,7 +182,7 @@ export class FlightModel {
     const thrTarget = c.afterburner ? 1 : c.throttle;
     this.power = moveToward(this.power, thrTarget, (thrTarget > this.power ? FLIGHT.spoolUp : FLIGHT.spoolDown) * dt);
     this.abLevel = moveToward(this.abLevel, c.afterburner && this.power > 0.9 ? 1 : 0, FLIGHT.abSpool * dt);
-    this.gearPos = moveToward(this.gearPos, c.gearDown ? 1 : 0, dt / FLIGHT.gearTime);
+    this.gearPos = moveToward(this.gearPos, c.gearDown && !mods.gearBroken ? 1 : 0, dt / FLIGHT.gearTime);
 
     // ---- frame ----------------------------------------------------------------------
     this.forward(_fwd);
@@ -204,7 +218,9 @@ export class FlightModel {
     // ---- forces (all as accelerations, m/s^2) ----------------------------------------------
     const q2 = speed * speed;
     const clA = liftCurve(this.aoa, aStall);
-    const liftBase = (G0 / (f.stallSpeed * f.stallSpeed)) * rho * diff.liftMul * mods.lift;
+    // spoilers up on the rollout: with the throttle closed the wings stop lifting once the wheels are down (no ballooning)
+    const dump = this.grounded && c.throttle < 0.3 && !c.afterburner ? 0.2 : 1;
+    const liftBase = (G0 / (f.stallSpeed * f.stallSpeed)) * rho * diff.liftMul * mods.lift * dump;
     const liftAcc = liftBase * q2 * clA;
     _lift.copy(_up).addScaledVector(_vhat, -_up.dot(_vhat));
     const ll = _lift.length();
@@ -230,20 +246,26 @@ export class FlightModel {
     _acc.y -= G0;
 
     this.vel.addScaledVector(_acc, dt);
+    // rudder turns the flight path a little directly (a flat turn), so small corrections need no big bank
+    if (diff.flatTurn > 0 && !this.grounded && Math.abs(c.yaw) > 0.01) {
+      const flat = -c.yaw * diff.flatTurn * smoothstep(vs, vs * 1.8, speed) * mods.yaw * dt;
+      _dq.setFromAxisAngle(_up, flat);
+      this.vel.applyQuaternion(_dq);
+    }
     this.pos.addScaledVector(this.vel, dt);
 
     // ---- rotation -------------------------------------------------------------------
     // authority grows with airspeed; pitch rate is also capped by the G limit at high speed
     const tv = f.thrustVectoring;
     const auth = lerp(lerp(FLIGHT.authorityMin, 0.8, tv), 1, smoothstep(vs * FLIGHT.authorityStart, vs * FLIGHT.authorityFull, speed));
-    const gAvail = f.gLimit * diff.gMul;
+    const gAvail = f.gLimit * diff.gMul * mods.gLimit;
     const vref = Math.max(speed, 50);
     const pitchPos = Math.min(f.pitchRate, (gAvail * G0) / vref);
     const pitchNeg = Math.min(f.pitchRate * FLIGHT.negPitchFraction, (FLIGHT.negGLimit * G0) / vref);
     let pTarget = c.pitch >= 0 ? c.pitch * pitchPos : c.pitch * pitchNeg;
 
     // angle-of-attack limiter: fades out pitch commands that would drive AoA past stall
-    const aLim = (c.pitch >= 0 ? aStall : aStall * 0.95) * (1 + 0.18 * tv);
+    const aLim = (c.pitch >= 0 ? aStall : aStall * 0.95) * (1 + 0.18 * tv) * diff.aoaHeadroom;
     if (c.pitch * this.aoa > 0) {
       pTarget *= 1 - diff.aoaLimiter * smoothstep(0.7 * aLim, aLim, Math.abs(this.aoa));
     }
@@ -319,6 +341,11 @@ export class FlightModel {
     const diff = this.difficulty;
     const s = env.surfaceAt(this.pos.x, this.pos.z, _surf);
     this.agl = this.pos.y - s.height;
+    // gear destroyed while rolling: it collapses at once and the aircraft settles onto its belly
+    if (this.grounded && this.mods.gearBroken && this.gearPos > 0) {
+      this.pos.y -= lerp(f.bellyHeight, f.gearHeight, this.gearPos) - f.bellyHeight;
+      this.gearPos = 0;
+    }
     const gearH = lerp(f.bellyHeight, f.gearHeight, this.gearPos);
     const clearance = this.pos.y - s.height - gearH;
 
@@ -331,31 +358,39 @@ export class FlightModel {
         const roll = Math.atan2(-this.rightVec(_right).y, _up.y);
         const sink = -this.vel.y;
         const lim = diff.landing;
-        const gearOk = this.gearPos > 0.85;
-        if (!(gearOk && s.onRunway)) {
-          this.crashed = !gearOk && s.onRunway ? 'Gear up' : s.height <= 0.01 ? 'Water' : 'Terrain';
+        const gearDown = this.gearPos > 0.85 && !this.mods.gearBroken;
+        const smooth = s.onRunway || s.onApron;
+        if (s.height <= 0.01 && this.speed > 25) {
+          this.crashed = 'Water';
           return;
         }
-        if (sink > lim.sink || Math.abs(roll) > lim.roll || this.speed > lim.speed || pitch < lim.pitchMin || pitch > lim.pitchMax) {
-          this.crashed = 'Hard landing';
+        // how far past the limits of a clean landing? 1 = exactly at them. Landings up to ~2.2 are survivable (with damage):
+        // that is a crash landing. Beyond that the aircraft is lost.
+        let sev = Math.max(sink / lim.sink, Math.abs(roll) / lim.roll, this.speed / lim.speed);
+        if (pitch < lim.pitchMin) sev = Math.max(sev, 1 + (lim.pitchMin - pitch) / 0.16);
+        if (pitch > lim.pitchMax) sev = Math.max(sev, 1 + (pitch - lim.pitchMax) / 0.22);
+        if (!gearDown) sev = Math.max(sev * 1.25, 0.9);
+        if (!smooth) sev *= 1.45;
+        if (s.height <= 0.01) sev *= 2;
+        if (sev > 2.2) {
+          this.crashed = s.height <= 0.01 ? 'Water' : !gearDown ? 'Crash landing' : smooth ? 'Hard landing' : 'Terrain';
           return;
         }
         this.grounded = true;
-        this.touchdown = true;
-      } else if (!s.onRunway && !s.onApron && this.speed > 22) {
-        this.crashed = 'Off runway';
-        return;
+        if (sev <= 1 && gearDown && smooth) this.touchdown = true;
+        else this.impact = { severity: sev, belly: !gearDown, rough: !smooth };
       }
       this.pos.y = s.height + gearH;
       if (this.vel.y < 0) this.vel.y = 0;
-      this.constrainToGround(dt, c);
+      this.constrainToGround(dt, c, s.onRunway || s.onApron);
     } else {
       if (clearance > 0.4) this.grounded = false;
       // wing tips and nose can hit mountains too
       this.forward(_fwd);
       this.rightVec(_right);
       const margin = 0.6;
-      for (let i = 0; i < 3; i++) {
+      // a slow slide that meets a slope just stops; only a fast one is a crash
+      for (let i = 0; i < 3 && !(this.grounded && this.speed < 45); i++) {
         if (i === 0) _pt.copy(this.pos).addScaledVector(_fwd, this.def.model.length * 0.45);
         else _pt.copy(this.pos).addScaledVector(_right, i === 1 ? this.def.model.wing.span * 0.5 : -this.def.model.wing.span * 0.5);
         const h = env.surfaceAt(_pt.x, _pt.z, _surf).height;
@@ -364,12 +399,13 @@ export class FlightModel {
           return;
         }
       }
-      if (this.grounded) this.constrainToGround(dt, c);
+      if (this.grounded) this.constrainToGround(dt, c, s.onRunway || s.onApron);
     }
   }
 
   /** While rolling: keep wings level, limit pitch, steer with the nosewheel, apply friction. */
-  private constrainToGround(dt: number, c: FlightInput): void {
+  private constrainToGround(dt: number, c: FlightInput, smooth: boolean): void {
+    const diff = this.difficulty;
     this.forward(_fwd);
     let fx = _fwd.x;
     let fz = _fwd.z;
@@ -395,7 +431,12 @@ export class FlightModel {
 
     // velocity follows the wheels; friction
     let vs = this.vel.x * fx + this.vel.z * fz;
-    const decel = (c.airbrake ? FLIGHT.brakeFriction : FLIGHT.rollingFriction) * G0;
+    // wheel brakes: B, or automatically (Arcade) once the throttle is closed on a runway
+    const braking = c.airbrake || (smooth && diff.id === 'arcade' && c.throttle < 0.08 && !c.afterburner);
+    const gearDown = this.gearPos > 0.85;
+    // rough ground slows an aircraft hard, a belly slide harder still
+    const decel = (smooth ? Math.max(braking ? FLIGHT.brakeFriction * (diff.id === 'arcade' ? 1.2 : 1) : FLIGHT.rollingFriction, gearDown ? 0 : 0.55) : gearDown ? (braking ? 0.75 : 0.55) : 0.8) * G0;
+    this.scrape = smooth ? 0 : this.speed;
     vs = Math.max(0, vs - decel * dt);
     this.vel.x = fx * vs;
     this.vel.z = fz * vs;

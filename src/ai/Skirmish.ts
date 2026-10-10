@@ -102,7 +102,7 @@ export class Skirmish {
 
   /** Fixed-step bookkeeping: respawn the fallen. */
   update(): void {
-    for (const s of this.slots) if (s.fighter.state === 'dead' && s.fighter.respawn <= 0) this.place(s);
+    for (const s of this.slots) if (s.fighter.state === 'dead' && s.fighter.respawn <= 0 && s.fighter.lives > 0) this.place(s);
   }
 
   render(alpha: number, dt: number, trailQuality: number): void {

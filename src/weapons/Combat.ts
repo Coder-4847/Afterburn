@@ -1007,6 +1007,30 @@ export class Combat implements FighterHooks {
     this.events.emit({ type: 'kill', killer, victim: f, weapon: cr.weapon || weapon || reason, assists: cr.assists });
   }
 
+  /**
+   * The pilot punches out. The aircraft is lost either way; `survived` decides whether the pilot is (a life is kept)
+   * or not (it counts as a death, like any other).
+   */
+  ejectFighter(f: Fighter, survived: boolean): void {
+    if (f.state === 'dead') return;
+    const wasAlive = f.state === 'alive';
+    this.events.emit({ type: 'eject', who: f, survived });
+    if (!survived) {
+      f.damage.pilotAlive = false;
+      if (wasAlive) this.bookKill(f, null, 'Ejection failed', 'Ejection failed');
+    }
+    if (wasAlive) {
+      // the empty aircraft goes down like any other wreck
+      const fl = f.aircraft.flight;
+      f.aircraft.controls.afterburner = false;
+      f.state = 'wreck';
+      fl.wreck = true;
+      fl.wreckSpin.set((Math.random() - 0.5) * 1.6, (Math.random() - 0.5) * 0.8, (Math.random() - 0.5) * 2);
+      f.damage.dead = true;
+      f.respawn = 5;
+    }
+  }
+
   /** Flew into the ground / left the zone while still flying: credit anyone who recently hurt us, then explode. */
   crashFighter(f: Fighter, reason: string, silent = false): void {
     if (f.state !== 'alive') return;
@@ -1047,6 +1071,8 @@ export class Combat implements FighterHooks {
   /** Final explosion: the aircraft is gone (respawn timer starts for AI). */
   explodeFighter(f: Fighter, silent = false): void {
     const fl = f.aircraft.flight;
+    // out of the fight first: otherwise its own explosion would "destroy" it a second time (a second kill, a second life lost)
+    f.state = 'dead';
     if (!silent) this.detonate(fl.pos, 24, 90, f.lastHit?.who ?? null, 'wreck', 28);
     for (const part of ['wingL', 'wingR', 'tail'] as const) {
       if (!f.damage.get(part).gone && Math.random() < 0.75) this.spawnDebris(f, part, f.ripPart(part));

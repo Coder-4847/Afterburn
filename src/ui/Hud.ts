@@ -48,6 +48,8 @@ export interface HudOptions {
   contrast?: boolean;
   /** No vignette, blinking or screen streaks. */
   reduceMotion?: boolean;
+  /** 0..1 strength of the high-G grey-out (Arcade keeps it light). */
+  gVignette?: number;
   unit: SpeedUnit;
   ladder: boolean;
   tape: boolean;
@@ -226,7 +228,7 @@ export class Hud {
     } else this.msg.style.opacity = '0';
 
     // G-load vignette (mild "grey-out" at high G, red tint under negative G)
-    const gv = smoothstep(5.5, 10, d.g) * 0.7;
+    const gv = smoothstep(5.5, 10, d.g) * 0.7 * (o.gVignette ?? 1);
     const neg = smoothstep(-1.2, -3.5, d.g) * 0.5;
     this.vignette.style.opacity = o.reduceMotion ? '0' : String(Math.max(gv, neg));
     this.vignette.classList.toggle('neg', neg > gv);

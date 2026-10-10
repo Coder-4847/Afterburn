@@ -32,11 +32,12 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, parent?
 const BIND_GROUPS: { title: string; rows: Action[] }[] = [
   { title: 'Weapons', rows: ['fireGun', 'fireMissile', 'weapon1', 'weapon2', 'weapon3', 'weapon4', 'cycleTarget', 'lockTarget', 'flares', 'chaff', 'targetCam'] },
   { title: 'Flight', rows: ['throttleUp', 'throttleDown', 'afterburner', 'airbrake', 'gear', 'pitchUp', 'pitchDown', 'rollLeft', 'rollRight', 'yawLeft', 'yawRight'] },
-  { title: 'View and interface', rows: ['camera', 'lookAround', 'map', 'scoreboard', 'toggleFps'] },
+  { title: 'View and interface', rows: ['camera', 'lookAround', 'map', 'scoreboard', 'eject', 'toggleFps'] },
 ];
 
 const MODES: { id: Settings['sortie']; name: string; desc: string }[] = [
   { id: 'tdm', name: 'Team Deathmatch', desc: 'You and AI wingmen against an AI team, from 1v1 up to 10v10. First team to the score limit wins.' },
+  { id: 'elimination', name: 'Last Stand', desc: 'Everyone has three lives and a spawn is a life. Ejecting can save yours. The first team to wipe out the other wins.' },
   { id: 'training', name: 'Training Range', desc: 'Target balloons, ground targets and Red drones that evade (or fight back). No score, no pressure.' },
   { id: 'freeflight', name: 'Free Flight', desc: 'An empty sky. Fly, land, practise, look around.' },
 ];
@@ -145,11 +146,13 @@ export class Menus {
     });
     el('p', 'hint-line', p, map.description);
 
-    if (s.sortie === 'tdm') {
+    if (s.sortie === 'tdm' || s.sortie === 'elimination') {
       el('div', 'section', p, 'Match');
       this.select(p, 'Team size', 'teamSize', [1, 2, 3, 5, 10].map((n) => [String(n), `${n} v ${n}`]), undefined, 'You count as one of your side; the rest are AI wingmen');
-      this.select(p, 'Score limit', 'scoreLimit', [10, 20, 30, 50].map((n) => [String(n), `${n} kills`]));
-      this.select(p, 'Time limit', 'timeLimit', [[0, 'None'], [5, '5 minutes'], [10, '10 minutes'], [15, '15 minutes']].map(([n, t]) => [String(n), String(t)]));
+      if (s.sortie === 'tdm') {
+        this.select(p, 'Score limit', 'scoreLimit', [10, 20, 30, 50].map((n) => [String(n), `${n} kills`]));
+        this.select(p, 'Time limit', 'timeLimit', [[0, 'None'], [5, '5 minutes'], [10, '10 minutes'], [15, '15 minutes']].map(([n, t]) => [String(n), String(t)]));
+      }
       this.select(p, 'AI skill', 'aiSkill', Object.entries(SKILLS).map(([id, k]) => [id, k.label]), undefined, 'Reaction time, aim, countermeasure use');
     } else if (s.sortie === 'training') {
       el('div', 'section', p, 'Range');

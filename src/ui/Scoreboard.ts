@@ -11,6 +11,8 @@ export interface ScoreRow {
   accuracy: number | null;
   you: boolean;
   alive: boolean;
+  /** Last Stand: lives left (null = not a lives match). */
+  lives: number | null;
 }
 
 export interface ScoreData {
@@ -40,8 +42,10 @@ export function renderScoreboard(into: HTMLElement, d: ScoreData): void {
     const rows = d.rows.filter((r) => r.team === team).sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
     const tbl = el('table', 'sb-table ' + team, into);
     const tr = el('tr', '', el('thead', '', tbl));
-    for (const h of ['Pilot', 'Aircraft', 'K', 'A', 'D', 'Acc']) el('th', h.length > 2 || h === 'K' ? '' : 'num', tr, h);
-    tr.children[2].className = tr.children[3].className = tr.children[4].className = tr.children[5].className = 'num';
+    const lives = d.rows.some((r) => r.lives !== null);
+    const heads = lives ? ['Pilot', 'Aircraft', 'K', 'A', 'D', 'Acc', 'Lives'] : ['Pilot', 'Aircraft', 'K', 'A', 'D', 'Acc'];
+    for (const h of heads) el('th', '', tr, h);
+    for (let i = 2; i < tr.children.length; i++) tr.children[i].className = 'num';
     const body = el('tbody', '', tbl);
     for (const r of rows) {
       const row = el('tr', (r.you ? 'you ' : '') + (r.alive ? '' : 'dead'), body);
@@ -51,6 +55,7 @@ export function renderScoreboard(into: HTMLElement, d: ScoreData): void {
       el('td', 'num', row, String(r.assists));
       el('td', 'num', row, String(r.deaths));
       el('td', 'num', row, r.accuracy === null ? '–' : Math.round(r.accuracy * 100) + '%');
+      if (lives) el('td', 'num', row, r.lives === null ? '' : r.lives > 0 ? '♥'.repeat(Math.min(3, r.lives)) : '–');
     }
   }
 }

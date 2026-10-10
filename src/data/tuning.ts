@@ -52,8 +52,8 @@ export const FLIGHT = {
   gearTime: 2.2,
 
   // --- ground ---------------------------------------------------------------------------
-  rollingFriction: 0.03,
-  brakeFriction: 0.38,
+  rollingFriction: 0.05,
+  brakeFriction: 0.85,
   groundSteer: 0.55, // rad/s of nosewheel steering
   maxRotatePitch: 15 * Math.PI / 180,
   runwayMargin: 14, // extra metres beyond the painted runway that still count as "on the runway"
@@ -94,9 +94,12 @@ export const AIM = {
   trimMax: 8 * Math.PI / 180,
   /** Scale on the roll command produced by the aim controller (keyboard roll is not affected). */
   rollScale: 0.7,
-  /** Bank allowed for a correction of th radians: bankBase + bankGain * th (capped by the difficulty). */
-  bankBase: 0.8,
-  bankGain: 1.6,
+  /** Bank allowed for a correction of th radians: maxBank * clamp((th / bankRef)^bankExp, bankMin, 1). */
+  bankRef: 0.6,
+  bankExp: 0.8,
+  bankMin: 0.14,
+  /** rad/s: how fast the remembered "big error" fades after a large turn starts to close. */
+  errDecay: 0.45,
   /** How much of the rudder is given up once the controller starts rolling (0 = keep all). */
   yawSuppress: 0.2,
   rollEngageMin: 0.035,

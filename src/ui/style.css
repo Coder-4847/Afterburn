@@ -257,3 +257,11 @@ body.hi-contrast .ro-lbl, body.hi-contrast .ro-unit, body.hi-contrast .ro-sub, b
 .hud-brief i { font-style: normal; font-family: var(--mono); font-size: 11px; color: rgba(232, 242, 247, 0.7); line-height: 1.6; }
 
 .hud .warns { z-index: 2; }
+
+/* ---------------- damage list ---------------- */
+.dmg-list { position: absolute; left: calc(max(24px, 4vw) + 86px); bottom: calc(9vh + 150px); display: flex; flex-direction: column; gap: 2px; font-size: 11px; letter-spacing: 0.04em; }
+.dmg-row { padding: 1px 6px; background: rgba(6, 10, 14, 0.5); border-left: 2px solid var(--warn); white-space: nowrap; min-height: 15px; }
+.dmg-row:empty { display: none; }
+.dmg-row.warn { border-left-color: #ffcf4d; color: #ffe9a8; }
+.dmg-row.bad { border-left-color: #ff8a3c; color: #ffc59a; }
+.dmg-row.out { border-left-color: #ff3b3b; color: #ff9a9a; }

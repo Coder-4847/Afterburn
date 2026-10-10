@@ -9,7 +9,7 @@ export type TerrainAssist = 'off' | 'warn' | 'auto';
 export type ControlScheme = 'mouse' | 'mouse-throttle-ws';
 export type DroneMode = 'passive' | 'hostile';
 /** What you are playing: the range, an empty sky, or a team deathmatch against AI. */
-export type SortieMode = 'training' | 'freeflight' | 'tdm';
+export type SortieMode = 'training' | 'freeflight' | 'tdm' | 'elimination';
 export type AiSkillId = 'rookie' | 'regular' | 'ace';
 
 export interface Settings {

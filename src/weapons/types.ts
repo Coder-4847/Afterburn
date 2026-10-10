@@ -46,4 +46,5 @@ export type CombatEvent =
   | { type: 'launch'; shooter: Attacker; weapon: string }
   | { type: 'damage-events'; victim: Target; events: DamageEvent[] }
   | { type: 'explosion'; point: Vector3; size: number }
+  | { type: 'eject'; who: Attacker; survived: boolean }
   | { type: 'miss-warning'; missileId: number };
