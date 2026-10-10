@@ -253,8 +253,10 @@ export class Fighter implements Target, Attacker {
       if (id && !st[i].internal) ext += STORES[id].weight;
     }
     const w = ext / Math.max(1, this.loadout.arm.payload);
-    f.mods.drag *= 1 + 0.22 * w;
-    f.mods.thrust *= 1 - 0.07 * w;
+    f.mods.drag *= 1 + 0.12 * w;
+    f.mods.thrust *= 1 - 0.04 * w;
+    // AI pilots keep the older, gentler engine response: they fly the same fights, just not quite as punchy as the player
+    if (!this.isPlayer) f.mods.thrust *= 0.62;
   }
 
   /** Visuals for stores on pylons. */

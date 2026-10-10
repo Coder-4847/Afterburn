@@ -44,9 +44,17 @@ export const FLIGHT = {
 
   // --- engine ---------------------------------------------------------------------------
   idleThrust: 0.06,
-  spoolUp: 0.5, // throttle fraction per second
-  spoolDown: 0.9,
-  abSpool: 2.0,
+  spoolUp: 1.6, // throttle fraction per second (a closed throttle to full power in well under a second)
+  spoolDown: 1.2,
+  abSpool: 3.2,
+  /** Multiplies every aircraft's thrust-to-weight (top speed is unchanged: parasitic drag is rebalanced to match). */
+  thrustScale: 1.7,
+  /**
+   * Parasitic drag at top speed as a share of full afterburner thrust. Thrust fades toward that share as speed approaches the
+   * top speed (power 8), so the jet keeps pulling hard until it is close to its limit instead of creeping up to it.
+   */
+  parasiticShare: 0.4,
+  thrustFadePower: 8,
   throttleRate: 0.45, // player throttle change per second while a key is held
   throttleWheelStep: 0.05,
   gearTime: 2.2,

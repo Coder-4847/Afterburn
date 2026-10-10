@@ -5,7 +5,7 @@ code. It records what the game is, how the code is organised, every system's cur
 work, how to test things in this environment, what has been done, and what is still open. If you change something significant,
 update the relevant section (and the "Change log" at the bottom) before you finish.
 
-Last updated: 2026-10-10, after commit `da349a9` (pushed). A second, much deeper **model pass (detail geometry, markings, shading) is in the working tree and NOT yet committed** (change log 10).
+Last updated: 2026-10-10, after commit `f37c3fd` (pushed, detail-geometry pass). Change 11 (acceleration) is in the working tree until committed.
 
 ---
 
@@ -136,6 +136,7 @@ and each aircraft's `flight` block.
 - Fixed step 1/60 s, `maxSubSteps` 5. Atmosphere: density scale height 9500 m, floor 0.45, thrust ~ density^0.7.
 - Soft stall (never spins; nose falls through), weathervane stability, authority scales with airspeed vs stall speed.
 - Drag: `inducedDrag 5`, `gearDrag 0.55`, **`airbrakeDrag 4.2`** (was 1.6).
+- **Acceleration (change 11)**: `FLIGHT.thrustScale 1.7` multiplies every jet's T/W; parasitic drag is only `parasiticShare 0.4` of AB thrust at top speed and thrust fades as `1 - (1-share) * (v/vmax)^8`, while induced / gear / brake / sideslip drags are divided by (share x scale) so they keep their old absolute size. Engine spool `spoolUp 1.6`, `spoolDown 1.2`, `abSpool 3.2`, AB engages above 80% power. Store penalty on a full load is now 12% drag / 4% thrust (was 22% / 7%). Measured (full external load): rotation speed in 3.5-5.5 s (was 7-10 s); 200 m/s to 80% of top speed in 19-24 s (90% never reached in 4 min before); 150 m/s from idle to 300 m/s in 9-13 s (was 16-26 s). **AI jets get thrust x0.62** (`Fighter.prePhysics`) so their speeds and turn radii stay as before and the arena logic still holds.
 - Mouse aim: `AIM.radiansPerCount 0.0021`, reticle max offset 40 deg. Dynamic bank cap (`bankRef 0.6, bankExp 0.8, bankMin 0.14`),
   `errDecay 0.45`, `rollScale 0.7`, `yawSuppress 0.2`. This was tuned over two feedback rounds: small corrections must not
   over-turn, big U-turns must not take forever. The Arcade difficulty adds `flatTurn` (rudder turns the heading without banking).
@@ -315,7 +316,8 @@ importing and appending it in `index.ts`.
    stays outside 15 s is lost like the player; ceiling/descent clamp bug fixed. Dev note: in the Browser pane the screenshot is a
    device-pixel crop (top-left), so use `camera.setViewOffset(W, H, W/6, H/6, W, H)` on `g.hangar.camera` and wait ~1 s before a screenshot.
 
-10. **Detail-geometry pass** (uncommitted): see 5.9 "Model pass 2". Triggered by feedback that the jets still read as tubes and pancakes.
+10. **Detail-geometry pass** (`f37c3fd`): see 5.9 "Model pass 2". Triggered by feedback that the jets still read as tubes and pancakes.
+11. **Acceleration** (uncommitted): faster spool, bigger thrust, thrust fade near top speed, lighter store penalty; see 5.1.
 
 ---
 

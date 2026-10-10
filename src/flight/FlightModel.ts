@@ -195,7 +195,7 @@ export class FlightModel {
     // ---- engine, gear -------------------------------------------------------------------
     const thrTarget = c.afterburner ? 1 : c.throttle;
     this.power = moveToward(this.power, thrTarget, (thrTarget > this.power ? FLIGHT.spoolUp : FLIGHT.spoolDown) * dt);
-    this.abLevel = moveToward(this.abLevel, c.afterburner && this.power > 0.9 ? 1 : 0, FLIGHT.abSpool * dt);
+    this.abLevel = moveToward(this.abLevel, c.afterburner && this.power > 0.8 ? 1 : 0, FLIGHT.abSpool * dt);
     this.gearPos = moveToward(this.gearPos, c.gearDown && !mods.gearBroken ? 1 : 0, dt / FLIGHT.gearTime);
 
     // ---- frame ----------------------------------------------------------------------
@@ -244,14 +244,20 @@ export class FlightModel {
     const sideAcc = -liftBase * 0.6 * q2 * liftCurve(this.beta, aStall);
     _side.copy(_right).addScaledVector(_vhat, -_right.dot(_vhat)).normalize();
 
-    // parasitic drag is derived so that max thrust balances drag at maxSpeed (sea level)
-    const k0 = (f.twAb * G0) / (f.maxSpeed * f.maxSpeed);
-    const dragFactor =
-      1 + FLIGHT.inducedDrag * f.energyBleed * clA * clA + 4 * this.beta * this.beta + FLIGHT.gearDrag * this.gearPos + (c.airbrake ? FLIGHT.airbrakeDrag : 0);
+    // Parasitic drag is derived so that the (faded) afterburner thrust balances it at maxSpeed (sea level). It is only a share of
+    // the thrust, which makes the other drags (induced, sideslip, gear, brake) divide by that share to keep their old size.
+    const share = FLIGHT.parasiticShare;
+    const scale = FLIGHT.thrustScale;
+    const k0 = (f.twAb * scale * share * G0) / (f.maxSpeed * f.maxSpeed);
+    const extra = FLIGHT.inducedDrag * f.energyBleed * clA * clA + 4 * this.beta * this.beta + FLIGHT.gearDrag * this.gearPos + (c.airbrake ? FLIGHT.airbrakeDrag : 0);
+    const dragFactor = 1 + extra / (share * scale);
     const dragAcc = k0 * rho * q2 * dragFactor * mods.drag;
 
+    // thrust holds up until the jet nears its top speed, then fades to the drag share
+    const xv = Math.min(1.25, speed / f.maxSpeed);
+    const fade = Math.max(0, 1 - (1 - share) * Math.pow(xv, FLIGHT.thrustFadePower));
     const tw = lerp(f.twMil * (FLIGHT.idleThrust + (1 - FLIGHT.idleThrust) * this.power), f.twAb, this.abLevel);
-    const thrustAcc = G0 * tw * Math.pow(rho, FLIGHT.thrustDensityExp) * mods.thrust;
+    const thrustAcc = G0 * tw * scale * fade * Math.pow(rho, FLIGHT.thrustDensityExp) * mods.thrust;
 
     _acc.set(0, 0, 0).addScaledVector(_fwd, thrustAcc).addScaledVector(_lift, liftAcc).addScaledVector(_side, sideAcc).addScaledVector(_vhat, -dragAcc);
     // carrier catapult: throttle to the stop on the deck and the shuttle takes over until launch speed, even if the throttle is
