@@ -75,7 +75,7 @@ export class DamageModel {
     const zAt = (f: number) => -L / 2 + f * L;
     const wide = m.sections.reduce((a, s) => Math.max(a, s[1]), 0);
     const high = m.sections.reduce((a, s) => Math.max(a, s[3] + s[2]), 0);
-    const low = m.sections.reduce((a, s) => Math.min(a, s[3] - s[2]), 0);
+    const low = m.sections.reduce((a, s) => Math.min(a, s[3] - (s[4] ?? s[2])), 0);
     const add = (id: string, kind: ModuleKind, label: string, frac: number, boxes: Box[], priority: number, blastWeight: number): void => {
       const c = new Vector3();
       for (const b of boxes) c.add(b.min).add(b.max);
@@ -104,7 +104,7 @@ export class DamageModel {
     // wings
     const w = m.wing;
     const z0 = zAt(w.zRoot);
-    const xr = secAt(m, w.zRoot + 0.08).hw * 0.8;
+    const xr = w.xRoot ?? secAt(m, w.zRoot + 0.08).hw * 0.8;
     const half = w.span / 2 - xr;
     for (const s of [-1, 1]) {
       const id = s < 0 ? 'wingL' : 'wingR';

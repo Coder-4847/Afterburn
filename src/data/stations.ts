@@ -1,4 +1,5 @@
 import type { AircraftDef } from '../aircraft/AircraftDef';
+import { secAt } from '../aircraft/ProceduralJet';
 import { STORES, type WeaponKind } from './weapons';
 
 /** One weapon station (hardpoint). Positions are in the aircraft's model space (-Z forward). */
@@ -65,17 +66,12 @@ const LAYOUTS: Record<string, Layout> = {
   j35: { tip: false, wing: [0.45], belly: 0, bay: 4, payload: 9, ...C },
 };
 
-/** Fuselage half-width at a given length fraction (same interpolation the model uses). */
+/** Where the first centre-line / fuselage station sits (fraction of the length), for jets with a chin intake in the way. */
+const BELLY_Z: Record<string, number> = { f16c: 0.58, j10c: 0.59, typhoon: 0.6 };
+
+/** Fuselage half-width and extent at a given length fraction (same interpolation the model uses). */
 function hwAt(def: AircraftDef, f: number): { hw: number; hh: number; yc: number } {
-  const s = def.model.sections;
-  for (let i = 0; i < s.length - 1; i++) {
-    if (f >= s[i][0] && f <= s[i + 1][0]) {
-      const t = (f - s[i][0]) / (s[i + 1][0] - s[i][0] || 1);
-      return { hw: s[i][1] + (s[i + 1][1] - s[i][1]) * t, hh: s[i][2] + (s[i + 1][2] - s[i][2]) * t, yc: s[i][3] + (s[i + 1][3] - s[i][3]) * t };
-    }
-  }
-  const l = s[s.length - 1];
-  return { hw: l[1], hh: l[2], yc: l[3] };
+  return secAt(def.model, f);
 }
 
 const cache = new Map<string, Armament>();
@@ -89,7 +85,7 @@ export function armamentFor(def: AircraftDef): Armament {
   const w = m.wing;
   const L = m.length;
   const z0 = -L / 2 + w.zRoot * L;
-  const xr = hwAt(def, w.zRoot + 0.08).hw * 0.8;
+  const xr = w.xRoot ?? hwAt(def, w.zRoot + 0.08).hw * 0.8;
   const half = w.span / 2 - xr;
   const stations: StationDef[] = [];
   const all: WeaponKind[] = ['ir', 'radar', 'rocket', 'bomb'];
@@ -113,7 +109,7 @@ export function armamentFor(def: AircraftDef): Armament {
     }
   });
   for (let i = 0; i < lay.belly; i++) {
-    const fz = 0.42 + 0.09 * Math.floor(i / 2);
+    const fz = (BELLY_Z[def.id] ?? 0.42) + 0.09 * Math.floor(i / 2);
     const sec = hwAt(def, fz);
     const s = i % 2 === 0 ? -1 : 1;
     const x = lay.belly === 1 ? 0 : s * Math.min(sec.hw * 0.7, 1.1);

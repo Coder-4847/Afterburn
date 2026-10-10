@@ -6,7 +6,7 @@ import {
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { clamp, damp, lerp } from '../core/math';
 import { Afterburner } from './Afterburner';
-import type { AircraftDef, FinSpec, IntakeSpec, ModelSpec } from './AircraftDef';
+import type { AircraftDef, FinSpec, IntakeSpec, ModelSpec, PodSpec, Section } from './AircraftDef';
 import { SKIN_TILE, makeJetMaterials, type JetMaterials } from './Materials';
 import type { Armament } from '../data/stations';
 import { STORES, type StoreDef } from '../data/weapons';
@@ -40,23 +40,37 @@ export interface ModelHandle {
 interface Ring {
   z: number;
   hw: number;
+  /** Half height above the centre (cy). */
   hh: number;
+  /** Half height below the centre; defaults to hh. */
+  hb?: number;
   cx: number;
   cy: number;
+  /** Cross-section exponent (2 ellipse, 4 rounded box) for the upper and lower halves. */
+  n?: number;
+  nb?: number;
 }
 
-/** Loft a closed tube through rings (super-ellipse cross sections). Nose/front is the first ring. */
-function loft(rings: Ring[], n: number, segments: number, capFront = false): BufferGeometry {
+/**
+ * Loft a closed tube through rings (super-ellipse cross sections, upper and lower halves may differ in height and
+ * squareness). Nose/front is the first ring.
+ */
+function loft(rings: Ring[], n: number, segments: number, capFront = false, capBack = false): BufferGeometry {
   const pos: number[] = [];
   const uv: number[] = [];
   const row = segments + 1;
   for (const r of rings) {
-    const per = 2 * Math.PI * Math.sqrt((r.hw * r.hw + r.hh * r.hh) / 2);
+    const hb = r.hb ?? r.hh;
+    const nt = r.n ?? n;
+    const nb = r.nb ?? r.n ?? n;
+    const per = 2 * Math.PI * Math.sqrt((r.hw * r.hw + ((r.hh + hb) / 2) ** 2) / 2);
     for (let j = 0; j <= segments; j++) {
       const t = (j / segments) * Math.PI * 2;
       const c = Math.cos(t);
       const s = Math.sin(t);
-      pos.push(r.cx + r.hw * Math.sign(c) * Math.pow(Math.abs(c), 2 / n), r.cy + r.hh * Math.sign(s) * Math.pow(Math.abs(s), 2 / n), r.z);
+      const up = s >= 0;
+      const ex = 2 / (up ? nt : nb);
+      pos.push(r.cx + r.hw * Math.sign(c) * Math.pow(Math.abs(c), ex), r.cy + (up ? r.hh : hb) * Math.sign(s) * Math.pow(Math.abs(s), ex), r.z);
       uv.push(((j / segments) * per) / SKIN_TILE, r.z / SKIN_TILE);
     }
   }
@@ -76,6 +90,14 @@ function loft(rings: Ring[], n: number, segments: number, capFront = false): Buf
     pos.push(f.cx, f.cy, f.z);
     uv.push(0, 0);
     for (let j = 0; j < segments; j++) idx.push(centre, j + 1, j);
+  }
+  if (capBack) {
+    const l = rings[rings.length - 1];
+    const centre = pos.length / 3;
+    pos.push(l.cx, l.cy, l.z);
+    uv.push(0, 0);
+    const base = (rings.length - 1) * row;
+    for (let j = 0; j < segments; j++) idx.push(centre, base + j, base + j + 1);
   }
   const g = new BufferGeometry();
   g.setAttribute('position', new Float32BufferAttribute(pos, 3));
@@ -219,20 +241,31 @@ function foilPatch(
 
 interface SecAt {
   hw: number;
+  /** Half height and centre of the whole section (top and bottom as one symmetric extent). */
   hh: number;
   yc: number;
+  top: number;
+  bot: number;
 }
 
-type Section = [number, number, number, number];
+/** A section with every column present: [z, hw, hh, yc, hb, n, nb]. */
+type FullSection = [number, number, number, number, number, number, number];
+
+function fullSections(s: Section[], defN: number): FullSection[] {
+  return s.map((q) => {
+    const n = q[5] ?? defN;
+    return [q[0], q[1], q[2], q[3], q[4] ?? q[2], n, q[6] ?? n] as FullSection;
+  });
+}
 
 /**
- * Smooth the fuselage stations: a monotone cubic (no overshoot) through the spec's [z, half width, half height, y centre]
- * stations, `sub` samples per segment. The straight-line loft of a handful of stations looks faceted; this does not.
+ * Smooth the stations: a monotone cubic (no overshoot) through half width, heights and centre, linear through the
+ * exponents, `sub` samples per segment. A straight-line loft of a handful of stations looks faceted; this does not.
  */
-function refineSections(s: Section[], sub: number): Section[] {
+function refineSections(s: FullSection[], sub: number): FullSection[] {
   const n = s.length;
   if (n < 3) return s;
-  const slopes = [1, 2, 3].map((c) => {
+  const slopes = [1, 2, 3, 4].map((c) => {
     const d: number[] = [];
     for (let i = 0; i < n - 1; i++) d.push((s[i + 1][c] - s[i][c]) / (s[i + 1][0] - s[i][0] || 1e-6));
     const m = new Array<number>(n);
@@ -256,7 +289,7 @@ function refineSections(s: Section[], sub: number): Section[] {
     }
     return m;
   });
-  const out: Section[] = [];
+  const out: FullSection[] = [];
   for (let i = 0; i < n - 1; i++) {
     const h = s[i + 1][0] - s[i][0];
     for (let k = 0; k < sub; k++) {
@@ -268,31 +301,43 @@ function refineSections(s: Section[], sub: number): Section[] {
       const h01 = -2 * t3 + 3 * t2;
       const h11 = t3 - t2;
       const v = (c: number) => h00 * s[i][c] + h10 * h * slopes[c - 1][i] + h01 * s[i + 1][c] + h11 * h * slopes[c - 1][i + 1];
-      out.push([s[i][0] + t * h, Math.max(0, v(1)), Math.max(0, v(2)), v(3)]);
+      out.push([
+        s[i][0] + t * h, Math.max(0, v(1)), Math.max(0, v(2)), v(3), Math.max(0, v(4)),
+        lerp(s[i][5], s[i + 1][5], t), lerp(s[i][6], s[i + 1][6], t),
+      ]);
     }
   }
   out.push(s[n - 1]);
   return out;
 }
 
-const refined = new WeakMap<ModelSpec, Section[]>();
-function fine(spec: ModelSpec): Section[] {
+const refined = new WeakMap<ModelSpec, FullSection[]>();
+function fine(spec: ModelSpec): FullSection[] {
   let r = refined.get(spec);
-  if (!r) refined.set(spec, (r = refineSections(spec.sections, 6)));
+  if (!r) refined.set(spec, (r = refineSections(fullSections(spec.sections, spec.shapeN ?? 2.5), 6)));
   return r;
 }
 
 export function secAt(spec: ModelSpec, f: number): SecAt {
   const s = fine(spec);
   f = clamp(f, 0, 1);
+  let q: FullSection | null = null;
+  let r: FullSection | null = null;
+  let t = 0;
   for (let i = 0; i < s.length - 1; i++) {
     if (f >= s[i][0] && f <= s[i + 1][0]) {
-      const t = (f - s[i][0]) / (s[i + 1][0] - s[i][0] || 1);
-      return { hw: lerp(s[i][1], s[i + 1][1], t), hh: lerp(s[i][2], s[i + 1][2], t), yc: lerp(s[i][3], s[i + 1][3], t) };
+      q = s[i];
+      r = s[i + 1];
+      t = (f - s[i][0]) / (s[i + 1][0] - s[i][0] || 1);
+      break;
     }
   }
-  const l = s[s.length - 1];
-  return { hw: l[1], hh: l[2], yc: l[3] };
+  if (!q || !r) q = r = s[s.length - 1];
+  const hw = lerp(q[1], r[1], t);
+  const yc = lerp(q[3], r[3], t);
+  const top = yc + lerp(q[2], r[2], t);
+  const bot = yc - lerp(q[4], r[4], t);
+  return { hw, hh: (top - bot) / 2, yc: (top + bot) / 2, top, bot };
 }
 
 type Kind = 'ail' | 'flap' | 'stab' | 'canard' | 'rudder' | 'brake';
@@ -302,8 +347,6 @@ interface Mover {
   kind: Kind;
   side: number;
 }
-
-const TWIN_NACELLE_SPACING = 1.35;
 
 /**
  * Procedural fighter built from an AircraftDef.model spec. Parts that move on the real aircraft are separate
@@ -339,6 +382,7 @@ export class JetModel implements ModelHandle {
     this.mats = makeJetMaterials(spec.colors, teamColor, def.id.length * 17 + def.id.charCodeAt(0));
     this.root.add(this.parts.wingL, this.parts.wingR, this.parts.tail, this.storeRoot);
     this.buildFuselage(spec);
+    this.buildPods(spec);
     this.buildWings(spec);
     this.buildTail(spec);
     this.buildIntakesAndCanopy(spec);
@@ -434,26 +478,30 @@ export class JetModel implements ModelHandle {
     return g;
   }
 
+  private ringsOf(L: number, secs: FullSection[], cx = 0): Ring[] {
+    return secs.map((s) => ({ z: -L / 2 + s[0] * L, hw: s[1], hh: s[2], hb: s[4], cx, cy: s[3], n: s[5], nb: s[6] }));
+  }
+
   // ---- fuselage -------------------------------------------------------------------------------
 
   private buildFuselage(spec: ModelSpec): void {
     const L = spec.length;
     const n = spec.shapeN ?? 2.5;
-    const secs = refineSections(spec.sections, 4);
-    const rings: Ring[] = secs.map(([f, hw, hh, yc]) => ({ z: -L / 2 + f * L, hw, hh, cx: 0, cy: yc }));
-    this.mesh(loft(rings, n, 40), this.mats.body);
+    const secs = refineSections(fullSections(spec.sections, n), 4);
+    this.mesh(loft(this.ringsOf(L, secs), n, 44), this.mats.body);
     this.fuselageDetail(spec, secs, n);
+  }
 
-    // twin-engine jets with widely spaced engines get distinct nacelles (Flanker family, Su-57)
-    if (spec.engines === 2 && (spec.engineSpacing ?? 0) >= TWIN_NACELLE_SPACING) {
-      const sp = spec.engineSpacing!;
-      const r = sp * 0.5;
-      const tail = spec.sections[spec.sections.length - 1][3];
-      for (const s of [1, -1]) {
-        const nr: Ring[] = [
-          [0.4, 0.3], [0.5, 0.78], [0.62, 1], [0.86, 1], [1.0, 0.9],
-        ].map(([f, k]) => ({ z: -L / 2 + f * L + (f === 1 ? 0.2 : 0), hw: r * k, hh: r * 0.85 * k, cx: s * sp, cy: tail - 0.05 }));
-        this.mesh(loft(nr, 2.6, 18), this.mats.body);
+  /** Extra lofted bodies from the spec: engine nacelles, tail booms, bumps and fairings. */
+  private buildPods(spec: ModelSpec): void {
+    const L = spec.length;
+    const dn = spec.shapeN ?? 2.5;
+    for (const p of spec.pods ?? ([] as PodSpec[])) {
+      const secs = refineSections(fullSections(p.rings, p.n ?? dn), 3);
+      const mat = p.mat === 'dark' ? this.mats.dark : p.mat === 'intake' ? this.mats.intake : p.mat === 'glass' ? this.mats.glass : this.mats.body;
+      for (const sx of p.mirror ? [1, -1] : [1]) {
+        const g = loft(this.ringsOf(L, secs, sx * p.x), p.n ?? dn, p.segments ?? 22, p.mouth ?? false, p.capBack ?? false);
+        this.mesh(g, mat);
       }
     }
   }
@@ -464,7 +512,7 @@ export class JetModel implements ModelHandle {
     const L = spec.length;
     const w = spec.wing;
     const z0 = -L / 2 + w.zRoot * L;
-    const xr = secAt(spec, w.zRoot + 0.08).hw * 0.8;
+    const xr = w.xRoot ?? secAt(spec, w.zRoot + 0.08).hw * 0.8;
     const half = w.span / 2 - xr;
     const fs = w.flapSpan ?? 0.42;
     const hingeC = 0.27;
@@ -480,7 +528,6 @@ export class JetModel implements ModelHandle {
       const TE = (t: number) => rootTE.clone().lerp(tipTE, t);
       const hinge = (t: number) => TE(t).lerp(LE(t), hingeC);
       const thickT = (t: number) => lerp(w.thickness, w.thickness * 0.34, t);
-      const thick = (p: Vector3) => lerp(w.thickness, w.thickness * 0.34, clamp((Math.abs(p.x) - xr) / half, 0, 1));
       const origin = new Vector3();
       const pg = s > 0 ? this.parts.wingR : this.parts.wingL;
       const sH = 1 - hingeC; // chord fraction of the hinge line
@@ -492,11 +539,17 @@ export class JetModel implements ModelHandle {
       this.foilSurface(LE, TE, fs, 1, sH, 1, hinge((fs + 1) / 2), axis, up, thickT, 'ail', s, pg);
 
       if (w.lerx) {
+        // a leading-edge root extension: a thin triangular strake that runs from well ahead of the wing, along the fuselage
+        // side, out to the wing's leading edge
         const reach = w.lerx.reach;
-        const A = P(xr * 0.6, z0 - w.lerx.length, w.y);
-        const Pp = LE(reach);
-        const R = P(xr, z0 + w.rootChord * 0.18);
-        this.mesh(polySlab([A, Pp, R], origin, up, () => w.thickness * 0.5), this.mats.flat, pg);
+        const xA = Math.max(0.25, xr * 0.9);
+        const A = P(xA, z0 - w.lerx.length, w.y);
+        const B = LE(reach);
+        const R = P(xr, z0 + w.rootChord * 0.2, w.y);
+        const sx = (t: number) => A.clone().lerp(B, t);
+        const tx = (t: number) => R.clone().lerp(B, t);
+        const tk = w.thickness * (w.lerx.thick ?? 0.5);
+        this.mesh(foilPatch(sx, tx, 0, 1, 0, 1, up, (t) => tk * (1 - t * 0.55), origin, 3, 8), this.mats.flat, pg);
       }
       if (w.pods) {
         const pod = this.mesh(new CylinderGeometry(0.17, 0.17, 2.6, 12).rotateX(Math.PI / 2), this.mats.dark, pg);
@@ -504,9 +557,13 @@ export class JetModel implements ModelHandle {
         const nose = this.mesh(new SphereGeometry(0.17, 10, 8), this.mats.dark, pg);
         nose.position.copy(pod.position).add(new Vector3(0, 0, -1.3));
       } else {
-        // wingtip accent tab (team colour)
         // team-colour band on the outer wing: a skin over the same aerofoil
-        this.mesh(foilPatch(LE, TE, 1 - 0.55 / half, 1, 0.04, 0.96, up, (t) => thickT(t) * 1.04 + 0.012, origin, 2, 10), this.mats.accent, pg);
+        this.mesh(foilPatch(LE, TE, 1 - 0.34 / half, 1, 0.06, 0.94, up, (t) => thickT(t) * 1.04 + 0.012, origin, 2, 10), this.mats.accent, pg);
+        if (w.tipRail) {
+          // launch rail on the wing tip for a short-range missile
+          const rail = this.mesh(new BoxGeometry(0.1, 0.1, Math.min(2.4, w.tipChord * 1.6 + 0.8)), this.mats.dark, pg);
+          rail.position.copy(tipLE).add(new Vector3(s * 0.08, 0, w.tipChord * 0.5 + 0.1));
+        }
       }
       this.wingtips.push(tipTE.clone().add(new Vector3(0, 0, -w.tipChord * 0.2)));
 
@@ -514,7 +571,6 @@ export class JetModel implements ModelHandle {
       const chord = (t: number) => lerp(w.rootChord, w.tipChord, t);
       // leading-edge slat: a darker skin over the front of the outer wing
       this.mesh(foilPatch(LE, TE, 0.22, 0.96, 0.015, 0.14, up, (t) => thickT(t) * 1.05 + 0.014, origin, 4, 5), this.mats.dark, pg);
-      void thick;
       for (const t of [0.14, 0.34, 0.62, 0.84]) {
         const fairing = this.mesh(new SphereGeometry(1, 8, 6), this.mats.dark, pg);
         fairing.scale.set(0.07, 0.06 * (1 - t * 0.5), chord(t) * 0.16 + 0.2);
@@ -530,38 +586,42 @@ export class JetModel implements ModelHandle {
     this.mesh(new SphereGeometry(r, 8, 6), this.mats.accent, parent, false).position.copy(p);
   }
 
-  /** Radome, nose band, pitot, dorsal spine, arrestor hook: everything on the fuselage that is not the skin itself. */
-  private fuselageDetail(spec: ModelSpec, secs: Section[], n: number): void {
+  /** Radome, pitot, dorsal spine, wing-root fillets, chines, sensor balls, probe, hook: everything that is not the skin itself. */
+  private fuselageDetail(spec: ModelSpec, secs: FullSection[], n: number): void {
     const L = spec.length;
-    const ring = (s: Section, k: number): Ring => ({ z: -L / 2 + s[0] * L, hw: s[1] * k, hh: s[2] * k, cx: 0, cy: s[3] });
+    const ft = spec.features ?? {};
+    const ring = (s: FullSection, k: number): Ring => ({ z: -L / 2 + s[0] * L, hw: s[1] * k, hh: s[2] * k, hb: s[4] * k, cx: 0, cy: s[3], n: s[5], nb: s[6] });
     // dark radome over the nose
-    const nose = secs.filter((s) => s[0] <= 0.1);
-    if (nose.length >= 3) this.mesh(loft(nose.map((s) => ring(s, 1.012)), n, 30), this.mats.dark);
-    // a thin team-colour band behind it
-    const band = secs.filter((s) => s[0] >= 0.165 && s[0] <= 0.185);
-    if (band.length >= 2) this.mesh(loft(band.map((s) => ring(s, 1.01)), n, 30), this.mats.accent);
+    const rEnd = ft.radome ?? 0.07;
+    const nose = secs.filter((s) => s[0] <= rEnd);
+    if (nose.length >= 3) this.mesh(loft(nose.map((s) => ring(s, 1.012)), n, 32), this.mats.dark);
     // pitot boom
-    const pitot = this.mesh(new CylinderGeometry(0.018, 0.03, L * 0.05, 6).rotateX(Math.PI / 2), this.mats.strut);
-    pitot.position.set(0, secs[0][3], -L / 2 - L * 0.018);
+    const tip = secs[0];
+    const pitot = this.mesh(new CylinderGeometry(0.014, 0.026, L * 0.05, 6).rotateX(Math.PI / 2), this.mats.strut);
+    pitot.position.set(0, tip[3], -L / 2 - L * 0.018);
     // dorsal spine from behind the canopy toward the fin
-    const f0 = spec.canopyZ + ((spec.canopyLen ?? 2) * 0.85) / L;
-    const f1 = Math.min(0.8, f0 + 0.3);
+    const glass = (spec.canopyLen ?? 2.2) / L;
+    const sp = ft.spine;
+    const f0 = sp ? sp[0] : spec.canopyZ + glass * 0.85;
+    const f1 = sp ? sp[1] : Math.min(0.8, f0 + 0.3);
+    const sw = sp ? sp[2] : 0.45;
+    const sh = sp ? sp[3] : 0.17;
     const spine: Ring[] = [];
     for (let i = 0; i <= 8; i++) {
       const t = i / 8;
       const f = f0 + (f1 - f0) * t;
       const sec = secAt(spec, f);
       const k = Math.pow(Math.sin(Math.PI * Math.min(1, t * 0.92 + 0.04)), 0.7);
-      const hw = Math.min(sec.hw * 0.5, 0.45) * k + 0.01;
-      const hh = 0.17 * k + 0.01;
-      spine.push({ z: -L / 2 + f * L, hw, hh, cx: 0, cy: sec.yc + sec.hh - 0.04 + hh * 0.5 });
+      const hw = Math.min(sec.hw * 0.5, sw) * k + 0.01;
+      const hh = sh * k + 0.01;
+      spine.push({ z: -L / 2 + f * L, hw, hh, cx: 0, cy: sec.top - 0.04 + hh * 0.5 });
     }
     this.mesh(loft(spine, 2.4, 14), this.mats.body);
     // wing-root fillets: a smooth fairing where each wing meets the body
     {
       const w = spec.wing;
       const z0 = -L / 2 + w.zRoot * L;
-      const xr = secAt(spec, w.zRoot + 0.08).hw * 0.8;
+      const xr = w.xRoot ?? secAt(spec, w.zRoot + 0.08).hw * 0.8;
       for (const s of [1, -1]) {
         const rings: Ring[] = [];
         for (let i = 0; i <= 6; i++) {
@@ -574,16 +634,16 @@ export class JetModel implements ModelHandle {
         this.mesh(loft(rings, 2.2, 12), this.mats.body);
       }
     }
-    // forebody chines on the modern designs: a thin sharp-edged shelf along each side of the nose
-    if (['f22', 'su57', 'j20', 'j35'].includes(this.def.id)) {
-      const f0 = 0.05;
-      const f1 = 0.34;
-      const mid = secAt(spec, (f0 + f1) / 2);
+    // forebody chines: a thin sharp-edged shelf along each side of the nose
+    if (ft.chines) {
+      const c0 = 0.05;
+      const c1 = Math.min(0.36, spec.wing.zRoot);
+      const mid = secAt(spec, (c0 + c1) / 2);
       for (const s of [1, -1]) {
         const xin = mid.hw * 0.7;
         const ext = 0.42 + mid.hw * 0.28;
-        const zA = -L / 2 + f0 * L;
-        const zB = -L / 2 + f1 * L;
+        const zA = -L / 2 + c0 * L;
+        const zB = -L / 2 + c1 * L;
         const y = mid.yc - mid.hh * 0.15;
         const LEf = (t: number) => new Vector3(s * (xin + t * ext), y, zA + t * (zB - zA) * 0.62);
         const TEf = (t: number) => new Vector3(s * (xin + t * ext), y, zB);
@@ -591,18 +651,44 @@ export class JetModel implements ModelHandle {
       }
     }
     // infra-red search and track ball ahead of the windscreen
-    if (['su27', 'su35s', 'j16', 'mig29', 'su57'].includes(this.def.id)) {
-      const fz = spec.canopyZ - 0.05;
+    if (ft.irst) {
+      const fz = spec.canopyZ - 0.03;
       const sec = secAt(spec, fz);
       const ball = this.mesh(new SphereGeometry(0.19, 12, 10), this.mats.glass);
-      ball.position.set(0, sec.yc + sec.hh + 0.04, -L / 2 + fz * L);
+      ball.position.set(0, sec.top + 0.04, -L / 2 + fz * L);
       const mount = this.mesh(new CylinderGeometry(0.2, 0.24, 0.1, 12), this.mats.dark);
-      mount.position.set(0, sec.yc + sec.hh - 0.02, -L / 2 + fz * L);
+      mount.position.set(0, sec.top - 0.02, -L / 2 + fz * L);
+    }
+    // refuelling probe
+    if (ft.probe) {
+      const s = ft.probe === 'R' ? 1 : -1;
+      const fz = Math.max(0.12, spec.canopyZ - 0.04);
+      const sec = secAt(spec, fz);
+      const probe = this.mesh(new CylinderGeometry(0.035, 0.035, 1.5, 6).rotateX(Math.PI / 2), this.mats.strut);
+      probe.position.set(s * sec.hw * 0.55, sec.top + 0.12, -L / 2 + fz * L - 0.75);
+      probe.rotation.x = 0.12;
+      const strut = this.mesh(new BoxGeometry(0.05, 0.28, 0.05), this.mats.strut);
+      strut.position.set(s * sec.hw * 0.55, sec.top + 0.02, -L / 2 + fz * L - 0.1);
+    }
+    // cannon muzzle
+    if (ft.gun) {
+      const [gx, gy, gz] = ft.gun;
+      const muzzle = this.mesh(new CylinderGeometry(0.075, 0.09, 0.5, 8).rotateX(Math.PI / 2), this.mats.dark);
+      muzzle.position.set(gx, gy, -L / 2 + gz * L);
+    }
+    // weapons-bay doors under the belly
+    if (ft.bay) {
+      const [b0, b1, bw] = ft.bay;
+      const sec = secAt(spec, (b0 + b1) / 2);
+      for (const dx of [-1, 1]) {
+        const door = this.mesh(new BoxGeometry(0.04, 0.03, (b1 - b0) * L), this.mats.dark);
+        door.position.set(dx * bw, sec.bot + 0.04, -L / 2 + ((b0 + b1) / 2) * L);
+      }
     }
     // arrestor hook stub under the tail
-    const tail = spec.sections[spec.sections.length - 1];
+    const tail = secAt(spec, 0.97);
     const hook = this.mesh(new BoxGeometry(0.07, 0.07, 1.5), this.mats.dark);
-    hook.position.set(0, tail[3] - tail[2] * 0.75, L / 2 - 1.8);
+    hook.position.set(0, tail.bot + 0.15, -L / 2 + (ft.hook ?? 0.9) * L);
     hook.rotation.x = 0.16;
   }
 
@@ -612,11 +698,12 @@ export class JetModel implements ModelHandle {
     const L = spec.length;
     const up = new Vector3(0, 1, 0);
 
-    const allMoving = (t: { zRoot: number; rootChord: number; tipChord: number; span: number; sweep: number; y: number; dihedral?: number }, kind: 'stab' | 'canard', pivotFrac: number, thickR: number, parent: Group) => {
+    const allMoving = (t: { zRoot: number; rootChord: number; tipChord: number; span: number; sweep: number; y: number; dihedral?: number; xRoot?: number; thickness?: number }, kind: 'stab' | 'canard', pivotFrac: number, thickR: number, parent: Group) => {
       const z0 = -L / 2 + t.zRoot * L;
-      const xr = secAt(spec, t.zRoot + 0.04).hw * 0.82;
+      const xr = t.xRoot ?? secAt(spec, t.zRoot + 0.04).hw * 0.82;
       const half = t.span / 2 - xr;
       const dih = t.dihedral ?? 0;
+      const thk = t.thickness ?? thickR;
       for (const s of [1, -1]) {
         const P = (x: number, z: number) => new Vector3(s * x, t.y + (x - xr) * dih, z);
         const rootLE = P(xr, z0);
@@ -628,18 +715,18 @@ export class JetModel implements ModelHandle {
         const axis = pt.clone().sub(pr);
         const LEf = (u: number) => rootLE.clone().lerp(tipLE, u);
         const TEf = (u: number) => rootTE.clone().lerp(tipTE, u);
-        this.foilSurface(LEf, TEf, 0, 1, 0, 1, pr, axis, up, (u) => lerp(thickR, thickR * 0.4, u), kind, s, parent);
+        this.foilSurface(LEf, TEf, 0, 1, 0, 1, pr, axis, up, (u) => lerp(thk, thk * 0.4, u), kind, s, parent);
       }
     };
-    if (spec.hstab) allMoving(spec.hstab, 'stab', 0.45, 0.22, this.parts.tail);
+    if (spec.hstab) allMoving(spec.hstab, 'stab', 0.45, 0.2, this.parts.tail);
     if (spec.canard) allMoving({ ...spec.canard, dihedral: 0 }, 'canard', 0.4, 0.16, this.root);
 
     for (const f of spec.fins) this.buildFin(spec, f);
 
     if (spec.airbrake) {
-      const sec = secAt(spec, 0.7);
-      const z = -L / 2 + 0.66 * L;
-      const top = sec.yc + sec.hh - 0.05;
+      const sec = secAt(spec, 0.62);
+      const z = -L / 2 + 0.6 * L;
+      const top = sec.top - 0.05;
       const pts = [new Vector3(-0.7, top, z), new Vector3(0.7, top, z), new Vector3(0.6, top, z + 2.2), new Vector3(-0.6, top, z + 2.2)];
       const pivot = new Vector3(0, top, z);
       this.surface(pts, pivot, new Vector3(1, 0, 0), up, () => 0.1, 'brake', 1, this.mats.dark);
@@ -651,9 +738,8 @@ export class JetModel implements ModelHandle {
     const ventral = f.height < 0;
     const z0 = -L / 2 + f.zRoot * L;
     const sec = secAt(spec, f.zRoot + 0.05);
-    const nacelle = spec.engines === 2 && (spec.engineSpacing ?? 0) >= TWIN_NACELLE_SPACING;
-    const xFin = f.x === 0 ? 0 : nacelle ? Math.min(f.x, (spec.engineSpacing ?? f.x) + 0.2) : Math.min(f.x, sec.hw + 0.2);
-    const yb = ventral ? sec.yc - sec.hh + 0.12 : sec.yc + sec.hh - 0.14;
+    const xFin = f.x;
+    const yb = f.y ?? (ventral ? sec.bot + 0.12 : sec.top - 0.14);
     const h = f.height;
     const sides = f.x === 0 ? [0] : [1, -1];
     const xAxis = new Vector3(1, 0, 0);
@@ -672,7 +758,8 @@ export class JetModel implements ModelHandle {
       const LE = (t: number) => rootLE.clone().lerp(tipLE, t);
       const TE = (t: number) => rootTE.clone().lerp(tipTE, t);
       const hinge = (t: number) => TE(t).lerp(LE(t), hingeC);
-      const thickT = (t: number) => lerp(0.26, 0.1, t);
+      const tk = f.thickness ?? Math.max(0.12, f.rootChord * 0.055);
+      const thickT = (t: number) => lerp(tk, tk * 0.42, t);
       const hasRudder = (f.rudder ?? true) && !ventral;
       const origin = new Vector3();
       const sH = 1 - hingeC;
@@ -685,16 +772,16 @@ export class JetModel implements ModelHandle {
         grp.add(g);
         this.movers.push({ g, axis: hinge(1).sub(hinge(s0)).normalize(), kind: 'rudder', side: 1 });
         // team stripe near the top
-        this.mesh(foilPatch(LE, TE, 0.84, 1, 0.04, 0.96, xAxis, (t) => thickT(t) * 1.04 + 0.014, origin, 2, 8), this.mats.accent, grp);
+        this.mesh(foilPatch(LE, TE, 0.91, 1, 0.06, 0.94, xAxis, (t) => thickT(t) * 1.04 + 0.014, origin, 2, 8), this.mats.accent, grp);
       } else {
         this.mesh(foilPatch(LE, TE, 0, 1, 0, 1, xAxis, thickT, origin, 4, 10), this.mats.flat, grp);
       }
       if (!ventral) {
         // antenna cap and a white tail light
         const cap = this.mesh(new SphereGeometry(1, 8, 6), this.mats.dark, grp);
-        cap.scale.set(0.1, 0.1, Math.max(0.5, f.tipChord * 0.4));
-        cap.position.set(0, yb + h + 0.04, z0 + f.sweep + f.tipChord * 0.4);
-        this.light(new Vector3(0, yb + h * 0.82, z0 + f.sweep * 0.82 + f.tipChord + 0.05), [2.4, 2.4, 2.4], grp, 0.055);
+        cap.scale.set(0.08, 0.08, Math.max(0.4, f.tipChord * 0.35));
+        cap.position.set(0, yb + h + 0.03, z0 + f.sweep + f.tipChord * 0.4);
+        this.light(new Vector3(0, yb + h * 0.82, z0 + f.sweep * 0.82 + f.tipChord + 0.05), [2.4, 2.4, 2.4], grp, 0.05);
       }
     }
   }
@@ -705,23 +792,35 @@ export class JetModel implements ModelHandle {
     const L = spec.length;
     const intake = (it: IntakeSpec, s: number) => {
       const z0 = -L / 2 + it.zFrac * L;
+      const n = it.n ?? 3.6;
+      const toe = it.toe ?? 0;
+      const drop = it.drop ?? 0;
       const rings: Ring[] = [];
       for (const t of [0, 0.035, 0.3, 0.65, 1]) {
-        rings.push({ z: z0 + t * it.len, hw: it.w * 0.5 * lerp(1, 0.86, t), hh: it.h * 0.5 * lerp(1, 0.9, t), cx: s * it.x, cy: it.y });
+        rings.push({
+          z: z0 + t * it.len, hw: it.w * 0.5 * lerp(1, 0.86, t), hh: it.h * 0.5 * lerp(1, 0.9, t), cx: s * (it.x - toe * t), cy: it.y - drop * t, n,
+        });
       }
-      this.mesh(loft(rings, 3.6, 16, true), this.mats.intake, this.root);
+      this.mesh(loft(rings, n, 20, true), this.mats.intake, this.root);
       // body skin covers everything but the lip, so only the dark front disc shows
-      const shell = loft(rings.slice(1).map((r) => ({ ...r, hw: r.hw * 1.01, hh: r.hh * 1.01 })), 3.6, 16);
+      const shell = loft(rings.slice(1).map((r) => ({ ...r, hw: r.hw * 1.01, hh: r.hh * 1.01 })), n, 20);
       this.mesh(shell, this.mats.body);
-      // rolled lip and a boundary-layer splitter
-      const lip = this.mesh(new TorusGeometry(1, 0.035, 6, 24).scale(it.w * 0.5 * 1.03, it.h * 0.5 * 1.03, 1), this.mats.body);
-      lip.position.set(s * it.x, it.y, z0 + 0.02);
-      if (it.x !== 0) {
-        const plate = this.mesh(new BoxGeometry(0.05, it.h * 1.15, it.len * 0.55), this.mats.dark);
-        plate.position.set(s * (it.x - it.w * 0.5 - 0.07), it.y, z0 + it.len * 0.2);
-      } else {
-        const plate = this.mesh(new BoxGeometry(it.w * 0.95, 0.05, it.len * 0.45), this.mats.dark);
-        plate.position.set(0, it.y - it.h * 0.5 - 0.05, z0 + it.len * 0.12);
+      // rolled lip: a thin collar of skin around the mouth
+      const lip = loft([
+        { z: z0 - 0.015, hw: it.w * 0.5 * 1.045, hh: it.h * 0.5 * 1.045, cx: s * it.x, cy: it.y, n },
+        { z: z0 + 0.1, hw: it.w * 0.5 * 1.03, hh: it.h * 0.5 * 1.03, cx: s * it.x, cy: it.y, n },
+      ], n, 20);
+      this.mesh(lip, this.mats.body);
+      if (it.splitter ?? true) {
+        if (it.x !== 0) {
+          // boundary-layer splitter on the fuselage side of a cheek intake
+          const plate = this.mesh(new BoxGeometry(0.05, it.h * 1.1, it.len * 0.5), this.mats.dark);
+          plate.position.set(s * (it.x - it.w * 0.5 - 0.06), it.y, z0 + it.len * 0.18);
+        } else {
+          // the diverter gap between a chin intake and the belly
+          const plate = this.mesh(new BoxGeometry(it.w * 0.98, 0.05, it.len * 0.5), this.mats.dark);
+          plate.position.set(0, it.y + it.h * 0.5 + 0.03, z0 + it.len * 0.2);
+        }
       }
     };
     for (const it of spec.intakes) {
@@ -732,53 +831,60 @@ export class JetModel implements ModelHandle {
       }
     }
 
-    // canopy: a teardrop bubble sitting in the fuselage, with bows, rails, a seat and a pilot inside
-    const sec = secAt(spec, spec.canopyZ);
-    const len = (spec.canopyLen ?? 2.0) * 1.4;
-    const hwMax = Math.min(sec.hw * 0.62, 0.64);
-    const hhMax = Math.max(0.34, Math.min(0.46, sec.hh * 0.5));
-    const zc = -L / 2 + spec.canopyZ * L - len * 0.12;
+    // canopy: a teardrop bubble sitting in the fuselage, with bows, rails, seats and pilots inside
+    const gl = spec.canopyLen ?? 2.2;
+    const mid = secAt(spec, spec.canopyZ + (gl * 0.4) / L);
+    const hwMax = spec.canopyW ?? clamp(mid.hw * 0.62, 0.3, 0.64);
+    const hhMax = spec.canopyH ?? clamp(mid.hh * 0.5, 0.34, 0.46);
+    const zc = -L / 2 + spec.canopyZ * L;
     const prof: [number, number, number][] = [
-      [0, 0.12, 0.1], [0.06, 0.34, 0.3], [0.14, 0.58, 0.55], [0.26, 0.82, 0.8], [0.4, 0.97, 0.96], [0.52, 1, 1], [0.66, 0.92, 0.88],
-      [0.8, 0.7, 0.62], [0.92, 0.4, 0.3], [1, 0.14, 0.1],
+      [0, 0.1, 0.08], [0.05, 0.3, 0.26], [0.12, 0.55, 0.52], [0.24, 0.8, 0.8], [0.38, 0.96, 0.96], [0.52, 1, 1], [0.66, 0.94, 0.9],
+      [0.8, 0.74, 0.66], [0.92, 0.44, 0.34], [1, 0.14, 0.1],
     ];
     const bubble: Ring[] = prof.map(([t, w, h]) => {
-      const s = secAt(spec, spec.canopyZ + (t * len - len * 0.12) / L);
-      const base = s.yc + s.hh - 0.3;
-      return { z: zc + t * len, hw: hwMax * w, hh: hhMax * h, cx: 0, cy: base + hhMax * h };
+      const s = secAt(spec, spec.canopyZ + (t * gl) / L);
+      const base = s.top - 0.26;
+      return { z: zc + t * gl, hw: hwMax * w, hh: hhMax * h, cx: 0, cy: base + hhMax * h };
     });
     this.mesh(loft(bubble, 2.2, 26), this.mats.glass);
     // windscreen frame across the front, then the bows
     const wf = bubble[2];
-    const frame = this.mesh(new BoxGeometry(wf.hw * 1.7, 0.05, 0.14), this.mats.dark);
+    const frame = this.mesh(new BoxGeometry(wf.hw * 1.7, 0.05, 0.12), this.mats.dark);
     frame.position.set(0, wf.cy - wf.hh * 0.98, wf.z);
-    for (const t of [0.14, 0.52, 0.92]) {
+    for (const t of spec.tandem ? [0.14, 0.4, 0.62, 0.92] : [0.14, 0.52, 0.92]) {
       const r = bubble[prof.findIndex((p) => p[0] >= t)];
-      const bow = this.mesh(new TorusGeometry(1, 0.026, 5, 18, Math.PI).scale(r.hw * 1.04, r.hh * 1.04, 1), this.mats.dark);
+      const bow = this.mesh(new TorusGeometry(1, 0.024, 5, 18, Math.PI).scale(r.hw * 1.04, r.hh * 1.04, 1), this.mats.dark);
       bow.position.set(0, r.cy - r.hh * 0.02, r.z);
     }
     for (const x of [1, -1]) {
-      const rail = this.mesh(new BoxGeometry(0.04, 0.05, len * 0.86), this.mats.dark);
+      const rail = this.mesh(new BoxGeometry(0.04, 0.05, gl * 0.86), this.mats.dark);
       const r = bubble[3];
-      rail.position.set(x * r.hw * 0.97, r.cy - r.hh * 0.6, zc + len * 0.5);
+      rail.position.set(x * r.hw * 0.97, r.cy - r.hh * 0.6, zc + gl * 0.5);
     }
-    const seat = this.mesh(new BoxGeometry(0.42, 0.5, 0.36), this.mats.dark);
-    seat.position.set(0, bubble[3].cy - 0.1, zc + len * 0.58);
-    const helmet = this.mesh(new SphereGeometry(0.15, 10, 8), this.mats.strut);
-    helmet.position.set(0, bubble[3].cy + 0.12, zc + len * 0.5);
+    for (const t of spec.tandem ? [0.34, 0.68] : [0.5]) {
+      const seat = this.mesh(new BoxGeometry(0.4, 0.46, 0.34), this.mats.dark);
+      seat.position.set(0, bubble[3].cy - 0.1, zc + gl * (t + 0.06));
+      const helmet = this.mesh(new SphereGeometry(0.14, 10, 8), this.mats.strut);
+      helmet.position.set(0, bubble[3].cy + 0.12, zc + gl * t);
+    }
   }
 
   // ---- engines -------------------------------------------------------------------------------
 
   private buildEngines(spec: ModelSpec): void {
     const L = spec.length;
-    const tail = spec.sections[spec.sections.length - 1];
+    const tail = secAt(spec, 1);
+    const ft = spec.features ?? {};
     const xs = spec.engines === 1 ? [0] : [-(spec.engineSpacing ?? 0.7), spec.engineSpacing ?? 0.7];
     const r = spec.nozzleRadius;
+    const y = spec.nozzleY ?? tail.yc;
+    const zp = spec.nozzleZ !== undefined ? -L / 2 + spec.nozzleZ * L : L / 2 - 0.7;
+    const asp = spec.nozzleAspect ?? 1;
     for (const x of xs) {
-      const pivot = new Vector3(x, tail[3], L / 2 - 0.7);
+      const pivot = new Vector3(x, y, zp);
       const grp = new Group();
       grp.position.copy(pivot);
+      grp.scale.set(asp, 1 / Math.sqrt(asp), 1);
       this.root.add(grp);
       const shell = this.mesh(new CylinderGeometry(r * 0.82, r, 1.5, 22, 1, true).rotateX(Math.PI / 2), this.mats.nozzle, grp);
       shell.position.z = 0.55;
@@ -800,13 +906,13 @@ export class JetModel implements ModelHandle {
       grp.add(burner.group);
       this.afterburners.push(burner);
       if (spec.vectoringNozzles) this.nozzleGroups.push(grp);
-      this.nozzles.push(new Vector3(x, tail[3], L / 2 + 0.6));
+      this.nozzles.push(new Vector3(x, y, zp + 1.3));
     }
-    if (spec.engines === 2) {
+    if (spec.engines === 2 && (ft.sting ?? true)) {
       // tail sting between the engines
       const sting = this.mesh(new CylinderGeometry(0.07, 0.2, 2.2, 10).rotateX(Math.PI / 2), this.mats.body);
-      sting.position.set(0, tail[3] + 0.05, L / 2 + 0.1);
-      this.light(new Vector3(0, tail[3] + 0.05, L / 2 + 1.2), [2.4, 2.4, 2.4], this.root, 0.05);
+      sting.position.set(0, y + 0.05, L / 2 + 0.1);
+      this.light(new Vector3(0, y + 0.05, L / 2 + 1.2), [2.4, 2.4, 2.4], this.root, 0.05);
     }
   }
 
@@ -815,8 +921,10 @@ export class JetModel implements ModelHandle {
   private buildGear(spec: ModelSpec): void {
     const L = spec.length;
     const def = this.def;
-    const nacelle = spec.engines === 2 && (spec.engineSpacing ?? 0) >= TWIN_NACELLE_SPACING;
-    const mainX = nacelle ? spec.engineSpacing! * 0.9 : Math.max(1.25, secAt(spec, 0.58).hw * 0.75 + 0.35);
+    const g = spec.gear ?? {};
+    const mainX = g.mainX ?? Math.max(1.25, secAt(spec, 0.58).hw * 0.75 + 0.35);
+    const mainR = g.mainR ?? 0.34;
+    const noseR = g.noseR ?? 0.22;
     // each leg is built from a handful of pieces merged into one mesh per material (strut metal, rubber, dark hardware)
     const makeLeg = (grp: Group, x: number, z: number, y0: number, wheelR: number, wide: number, kind: 'nose' | 'mainL' | 'mainR'): void => {
       const wy = -(def.flight.gearHeight - wheelR) - y0;
@@ -824,7 +932,7 @@ export class JetModel implements ModelHandle {
       const metal: BufferGeometry[] = [];
       const rubber: BufferGeometry[] = [];
       const hard: BufferGeometry[] = [];
-      const at = (g: BufferGeometry, px: number, py: number, pz: number): BufferGeometry => g.translate(px, py, pz);
+      const at = (geo: BufferGeometry, px: number, py: number, pz: number): BufferGeometry => geo.translate(px, py, pz);
       metal.push(at(new CylinderGeometry(0.09, 0.105, drop * 0.55, 10), 0, wy * 0.275, 0));
       metal.push(at(new CylinderGeometry(0.05, 0.055, drop * 0.5, 8), 0, wy * 0.77, 0));
       const twin = kind === 'nose';
@@ -846,7 +954,7 @@ export class JetModel implements ModelHandle {
       }
       const add = (list: BufferGeometry[], mat: Material): void => {
         const m = mergeGeometries(list, false);
-        for (const g of list) g.dispose();
+        for (const geo of list) geo.dispose();
         if (m) this.mesh(m, mat, grp);
       };
       add(metal, this.mats.strut);
@@ -855,9 +963,9 @@ export class JetModel implements ModelHandle {
       grp.position.set(x, y0, z);
       this.root.add(grp);
     };
-    makeLeg(this.nose, 0, -L / 2 + 0.2 * L, -0.4, 0.22, 0.14, 'nose');
-    makeLeg(this.mainL, -mainX, -L / 2 + 0.58 * L, -0.4, 0.34, 0.22, 'mainL');
-    makeLeg(this.mainR, mainX, -L / 2 + 0.58 * L, -0.4, 0.34, 0.22, 'mainR');
+    makeLeg(this.nose, 0, -L / 2 + (g.noseZ ?? 0.2) * L, -0.4, noseR, 0.14, 'nose');
+    makeLeg(this.mainL, -mainX, -L / 2 + (g.mainZ ?? 0.58) * L, -0.4, mainR, 0.22, 'mainL');
+    makeLeg(this.mainR, mainX, -L / 2 + (g.mainZ ?? 0.58) * L, -0.4, mainR, 0.22, 'mainR');
   }
 
   // ---- weapon stores -------------------------------------------------------------------------

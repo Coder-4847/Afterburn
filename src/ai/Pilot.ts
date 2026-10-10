@@ -2,6 +2,7 @@ import { Vector3 } from 'three';
 import type { AirstripDef } from '../data/maps/types';
 import type { SurfaceInfo } from '../flight/FlightModel';
 import { GRAVITY } from '../data/weapons';
+import { WORLD_BOUNDARY } from '../data/tuning';
 import { DEG, clamp } from '../core/math';
 import { MouseAim } from '../flight/MouseAim';
 import { scanTerrain, type TerrainThreat } from '../flight/TerrainAssist';
@@ -46,6 +47,7 @@ const _f = new Vector3();
 const _p = new Vector3();
 const _t = new Vector3();
 const _v = new Vector3();
+const _in = new Vector3();
 const _surf: SurfaceInfo = { height: 0, onRunway: false, onApron: false };
 const RAYS = [0, 25, -25, 50, -50, 80, -80];
 
@@ -87,6 +89,8 @@ export class PilotBrain implements Brain {
   private strikeOff = 0;
   private strikeBombs = 2;
   private strikeRocketT = 0;
+  /** Seconds spent outside the combat zone: the same countdown the player gets, then the jet is lost. */
+  private outT = 0;
 
   constructor(
     private combat: Combat,
@@ -105,6 +109,7 @@ export class PilotBrain implements Brain {
     this.crank = 0;
     this.rtbBlock = 0;
     this.strikeT = 0;
+    this.outT = 0;
     this.strikeBombs = 2;
     this.missileCool = 14 + Math.random() * 14;
     this.aim.snapTo(f.aircraft.flight);
@@ -158,6 +163,22 @@ export class PilotBrain implements Brain {
     if (hardLock && this.notchT <= -2) {
       this.notchT = 3;
       this.notchSide = Math.random() < 0.5 ? -1 : 1;
+    }
+
+    // ---- how close to the edge of the arena are we, and are we heading out? ----
+    const edgeK = this.edgePressure(f, _in);
+    const beyond = Math.max(Math.abs(f.pos.x - this.center.x), Math.abs(f.pos.z - this.center.z)) > this.boundary;
+    this.outT = beyond ? this.outT + dt : Math.max(0, this.outT - dt * 2);
+    if (this.outT > WORLD_BOUNDARY.countdown) {
+      this.outT = 0;
+      this.combat.crashFighter(f, 'Left combat zone');
+      return;
+    }
+    if (evading && edgeK > 0.15) {
+      // beam the missile on whichever side keeps us in the arena
+      _d.crossVectors(this.evadeLos, UP);
+      this.evadeSide = _d.dot(_in) >= 0 ? 1 : -1;
+      _d.multiplyScalar(this.evadeSide);
     }
 
     // ---- pick a target (spread out: avoid everyone piling on one jet) ----
@@ -225,13 +246,8 @@ export class PilotBrain implements Brain {
     // ---- ceiling: thin air makes a jet a poor fighter, and the sky is not the arena ----
     if (f.pos.y > 5600) _d.y = Math.min(_d.y, -0.15 - (f.pos.y - 5600) / 2500);
 
-    // ---- stay in the arena ----
-    const edge = Math.max(Math.abs(f.pos.x), Math.abs(f.pos.z));
-    if (edge > this.boundary * 0.88 && this.mode !== 'evade') {
-      _p.set(this.center.x - f.pos.x, 0, this.center.z - f.pos.z).normalize();
-      const k = clamp((edge - this.boundary * 0.88) / (this.boundary * 0.1), 0, 1);
-      _d.normalize().lerp(_p, k).normalize();
-    }
+    // ---- stay in the arena: whatever the goal, bend the heading back in before the jet runs out of room to turn ----
+    if (edgeK > 0) this.bendInward(_d, _in, edgeK);
 
     // ---- a goal behind us: turn level toward it. (The control law pulls "up and over" toward anything directly behind,
     // which sends two jets that have just merged straight up into the sky.) ----
@@ -247,22 +263,26 @@ export class PilotBrain implements Brain {
     }
 
     // never dive when the ground is already close below
-    _d.y = Math.max(_d.y, clamp((700 - fl.agl) / 700, 0, 1) * 0.45);
+    if (fl.agl < 700) _d.y = Math.max(_d.y, ((700 - fl.agl) / 700) * 0.45);
 
     // ---- terrain avoidance beats everything ----
     scanTerrain(fl, this.combat.env as never, 10, this.threat);
-    this.avoidTerrain(f, _d, this.threat.time);
+    this.avoidTerrain(f, _d, this.threat.time, edgeK);
+    // terrain avoidance picks the heading with the most clearance, which near an edge is often out over open sea.
+    // Unless the ground is about to be hit, the arena wins the heading and avoidance only keeps its climb.
+    if (edgeK > 0.3 && this.threat.time > 5 && fl.agl > 180) this.bendInward(_d, _in, Math.max(edgeK, 0.85));
 
     // ---- flight controls ----
     _d.normalize();
     this.aim.aim.copy(_d);
     this.aim.clampToNose(fl);
     this.aim.compute(fl, fl.difficulty, this.cmd);
-    c.pitch = this.cmd.pitch * (this.mode === 'evade' || this.mode === 'defend' ? 1 : sk.g);
+    // a jet that is running out of room pulls everything it has, whatever its skill
+    c.pitch = this.cmd.pitch * (this.mode === 'evade' || this.mode === 'defend' || edgeK > 0.4 ? 1 : sk.g);
     c.roll = this.cmd.roll;
     c.yaw = this.cmd.yaw;
     c.throttle = clamp(0.6 + (speed - fl.speed) * 0.02, 0.2, 1);
-    c.afterburner = ab || fl.speed < speed - 70;
+    c.afterburner = ab || fl.speed < speed - 70 || (edgeK > 0.6 && fl.speed < 300);
     c.gearDown = false;
     c.airbrake = false;
   }
@@ -384,7 +404,7 @@ export class PilotBrain implements Brain {
    * Mountains are walls at jet speed: fan a few rays out ahead, take the heading with the most clearance and climb.
    * The closer the impact, the harder the climb.
    */
-  private avoidTerrain(f: Fighter, out: Vector3, time: number): void {
+  private avoidTerrain(f: Fighter, out: Vector3, time: number, edgeK = 0): void {
     const fl = f.aircraft.flight;
     // cheap first look: is the way ahead (and below the horizon) clear of anything a steady 14 degree climb could not clear?
     if (time >= 10 && fl.agl >= 160 && this.rampClear(f)) return;
@@ -404,8 +424,12 @@ export class PilotBrain implements Brain {
         // a jet that needs to clear this point must climb: count the shortfall against how far away it is
         clear = Math.min(clear, f.pos.y + d * 0.3 - h);
       }
-      // prefer going straight on unless another heading is clearly better
-      const score = clear - Math.abs(deg) * 6;
+      // prefer going straight on unless another heading is clearly better; near the edge, headings that leave the arena lose
+      let score = clear - Math.abs(deg) * 6;
+      if (edgeK > 0) {
+        const ex = Math.max(Math.abs(f.pos.x + _p.x * reach * 0.6 - this.center.x), Math.abs(f.pos.z + _p.z * reach * 0.6 - this.center.z));
+        if (ex > this.boundary * 0.92) score -= 3000 * edgeK;
+      }
       if (score > bestClear) {
         bestClear = score;
         best = deg;
@@ -414,6 +438,68 @@ export class PilotBrain implements Brain {
     out.copy(_f).applyAxisAngle(UP, best * DEG);
     out.y = time < 5 || fl.agl < 160 ? 0.95 : time < 8 ? 0.55 : 0.3;
     out.normalize();
+  }
+
+  // ---- arena edge ------------------------------------------------------------------------------
+
+  /**
+   * 0..1 pressure to turn back into the arena. A jet needs about one turn radius of room to reverse, so the pressure
+   * rises as the distance left along the current heading (to the safe square) shrinks toward that radius. Writes the
+   * horizontal direction toward the middle to `inward`.
+   */
+  private edgePressure(f: Fighter, inward: Vector3): number {
+    const fl = f.aircraft.flight;
+    const px = f.pos.x - this.center.x;
+    const pz = f.pos.z - this.center.z;
+    const lim = this.boundary * 0.8;
+    const dist = Math.max(Math.abs(px), Math.abs(pz));
+    inward.set(-px, 0, -pz);
+    if (inward.lengthSq() < 1) inward.set(0, 0, -1);
+    inward.normalize();
+    if (dist < lim * 0.45) return 0;
+    let vx = fl.vel.x;
+    let vz = fl.vel.z;
+    const sp = Math.hypot(vx, vz) || 1;
+    vx /= sp;
+    vz /= sp;
+    // outside the safe square: full pressure if still heading out, firm pressure while coming back
+    if (dist > lim) return (px * vx + pz * vz) / (Math.hypot(px, pz) || 1) > 0.15 ? 1 : 0.6;
+    // thin air widens the turn: the same stick turns a jet at 6 km in a circle twice the size of one at sea level
+    const air = Math.max(0.45, Math.exp(-Math.max(0, f.pos.y) / 9500));
+    // a crippled jet (a wing shot up, an engine out) turns in a much wider circle
+    const hurt = 1 + Math.max(0, 0.5 - f.damage.health()) * 3;
+    const R = clamp(((sp * sp) / (GRAVITY * 8 * air)) * hurt, 450, 5000);
+    const tx = vx > 1e-3 ? (lim - px) / vx : vx < -1e-3 ? (-lim - px) / vx : Infinity;
+    const tz = vz > 1e-3 ? (lim - pz) / vz : vz < -1e-3 ? (-lim - pz) / vz : Infinity;
+    const s = Math.min(tx, tz);
+    return clamp((2 * R - s) / (1.4 * R), 0, 1);
+  }
+
+  /** Rotate the horizontal part of `d` toward `inward` by k of the angle between them (the climb is kept). */
+  private bendInward(d: Vector3, inward: Vector3, k: number): void {
+    const y = d.y;
+    let hx = d.x;
+    let hz = d.z;
+    const hl = Math.hypot(hx, hz);
+    if (hl < 1e-3) {
+      hx = inward.x;
+      hz = inward.z;
+    } else {
+      hx /= hl;
+      hz /= hl;
+    }
+    // signed angle from the current heading to the inward direction
+    const cross = hx * inward.z - hz * inward.x;
+    const dot = hx * inward.x + hz * inward.z;
+    let ang = Math.atan2(cross, dot);
+    if (Math.abs(ang) > 3.0) ang = ang >= 0 ? Math.PI : -Math.PI;
+    const a = ang * k;
+    const c = Math.cos(a);
+    const s = Math.sin(a);
+    const nx = hx * c - hz * s;
+    const nz = hx * s + hz * c;
+    const flat = Math.sqrt(Math.max(0, 1 - y * y));
+    d.set(nx * flat, y, nz * flat);
   }
 
   // ---- behaviours ----------------------------------------------------------------------------

@@ -83,10 +83,10 @@ function skinTextures(colors: ModelSpec['colors'], seed: number): SkinTextures {
     lines.push(rnd() < 0.5 ? [x, y, x + len, y] : [x, y, x, y + len]);
   }
   for (const [x0, y0, x1, y1] of lines) {
-    g.strokeStyle = 'rgba(8,10,14,0.27)';
+    g.strokeStyle = 'rgba(8,10,14,0.15)';
     g.lineWidth = 1.8;
     g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
-    g.strokeStyle = 'rgba(255,255,255,0.06)';
+    g.strokeStyle = 'rgba(255,255,255,0.035)';
     g.lineWidth = 1.5;
     g.beginPath(); g.moveTo(x0 + 2.5, y0 + 2.5); g.lineTo(x1 + 2.5, y1 + 2.5); g.stroke();
     h.strokeStyle = '#2c2c2c';
@@ -99,7 +99,7 @@ function skinTextures(colors: ModelSpec['colors'], seed: number): SkinTextures {
     const t = rnd();
     const x = x0 + (x1 - x0) * t + (y1 === y0 ? 0 : 6);
     const y = y0 + (y1 - y0) * t + (x1 === x0 ? 0 : 6);
-    g.fillStyle = 'rgba(0,0,0,0.28)';
+    g.fillStyle = 'rgba(0,0,0,0.16)';
     g.fillRect(x, y, 2, 2);
     h.fillStyle = '#b4b4b4';
     h.fillRect(x / 2, y / 2, 1.4, 1.4);
@@ -107,7 +107,7 @@ function skinTextures(colors: ModelSpec['colors'], seed: number): SkinTextures {
   // access hatches and a little exhaust-style weathering streaks
   for (let i = 0; i < 22; i++) {
     const x = rnd() * S, y = rnd() * S, w = 30 + rnd() * 70, hh = 20 + rnd() * 40;
-    g.strokeStyle = 'rgba(8,10,14,0.38)';
+    g.strokeStyle = 'rgba(8,10,14,0.2)';
     g.lineWidth = 1.8;
     g.strokeRect(x, y, w, hh);
     h.strokeStyle = '#303030';
@@ -117,7 +117,7 @@ function skinTextures(colors: ModelSpec['colors'], seed: number): SkinTextures {
   for (let i = 0; i < 40; i++) {
     const x = rnd() * S, y = rnd() * S;
     const grad = g.createLinearGradient(x, y, x + 6 + rnd() * 8, y + 100 + rnd() * 160);
-    grad.addColorStop(0, 'rgba(20,18,16,0.10)');
+    grad.addColorStop(0, 'rgba(20,18,16,0.07)');
     grad.addColorStop(1, 'rgba(20,18,16,0)');
     g.fillStyle = grad;
     g.fillRect(x, y, 10, 260);
@@ -154,16 +154,16 @@ export interface JetMaterials {
 export function makeJetMaterials(colors: ModelSpec['colors'], teamColor: number, seed: number): JetMaterials {
   const skin = skinTextures(colors, seed);
   const body = new MeshStandardMaterial({
-    color: 0xffffff, map: skin.map, bumpMap: skin.bump, bumpScale: 1.0, metalness: 0.42, roughness: 0.46,
+    color: 0xffffff, map: skin.map, bumpMap: skin.bump, bumpScale: 0.7, metalness: 0.1, roughness: 0.58,
   });
   const flat = body.clone();
   flat.side = DoubleSide;
   return {
     body,
     flat,
-    dark: new MeshStandardMaterial({ color: colors.dark, metalness: 0.6, roughness: 0.5 }),
+    dark: new MeshStandardMaterial({ color: colors.dark, metalness: 0.2, roughness: 0.62 }),
     accent: new MeshStandardMaterial({ color: teamColor, metalness: 0.25, roughness: 0.45, emissive: teamColor, emissiveIntensity: 0.18, side: DoubleSide }),
-    glass: new MeshStandardMaterial({ color: 0x0d1822, metalness: 0.95, roughness: 0.04, envMapIntensity: 1.7 }),
+    glass: new MeshStandardMaterial({ color: 0x1b2a3a, metalness: 0.7, roughness: 0.07, envMapIntensity: 1.5 }),
     intake: new MeshStandardMaterial({ color: 0x050607, roughness: 1, metalness: 0 }),
     nozzle: new MeshStandardMaterial({ color: 0x4a4440, metalness: 0.85, roughness: 0.38, side: DoubleSide }),
     heat: new MeshBasicMaterial({ color: new Color(1.6, 0.5, 0.12), toneMapped: false }),

@@ -41,12 +41,16 @@ export interface WingSpec {
   thickness: number;
   y: number;
   dihedral: number;
+  /** Where the wing leaves the fuselage side (m from the centre line). Default: a bit inside the fuselage skin. */
+  xRoot?: number;
   /** Fraction of the half span covered by the inboard flap (rest is the aileron). Default 0.42. */
   flapSpan?: number;
   /** Leading-edge root extension: how far forward of the root LE (m) and how far out along the span (0..1). */
-  lerx?: { length: number; reach: number };
+  lerx?: { length: number; reach: number; /** Thickness as a fraction of the wing root thickness (default 0.5). */ thick?: number };
   /** ECM / launcher pods on the wingtips. */
   pods?: boolean;
+  /** Wingtip launch rails (a thin dark rail on each tip). */
+  tipRail?: boolean;
 }
 
 export interface TailplaneSpec {
@@ -57,6 +61,9 @@ export interface TailplaneSpec {
   sweep: number;
   y: number;
   dihedral: number;
+  /** Where the surface leaves the fuselage / boom (m from the centre line). */
+  xRoot?: number;
+  thickness?: number;
 }
 
 export interface FinSpec {
@@ -71,6 +78,9 @@ export interface FinSpec {
   cant: number;
   /** Has a hinged rudder. Default true for upper fins. */
   rudder?: boolean;
+  /** Height of the fin root above the centre line (m). Default: the top (or bottom) of the fuselage there. */
+  y?: number;
+  thickness?: number;
 }
 
 export interface IntakeSpec {
@@ -81,13 +91,62 @@ export interface IntakeSpec {
   w: number;
   h: number;
   len: number;
+  /** Squareness of the mouth: 2 = ellipse, 4+ = a rounded rectangle. Default 3.6. */
+  n?: number;
+  /** The duct moves toward the centre line by this much over its length (m). */
+  toe?: number;
+  /** The duct moves down by this much over its length (m). */
+  drop?: number;
+  /** A thin boundary-layer splitter plate beside the mouth (default true). */
+  splitter?: boolean;
+}
+
+/** Section of the fuselage: [z fraction 0(nose)..1(tail), half width, half height above yc, y centre, half height below yc (default: same), top exponent (default shapeN), bottom exponent (default: top)]. */
+export type Section = [number, number, number, number, number?, number?, number?];
+
+/** An extra lofted body: engine nacelle, tail boom, intake bump, conformal fairing. */
+export interface PodSpec {
+  /** Centre line offset (m). */
+  x: number;
+  /** Also build the mirror image. */
+  mirror?: boolean;
+  rings: Section[];
+  mat?: 'body' | 'dark' | 'intake' | 'glass';
+  /** Default cross-section exponent. */
+  n?: number;
+  /** Close the front with a dark disc (an intake mouth). */
+  mouth?: boolean;
+  /** Close the rear end. */
+  capBack?: boolean;
+  segments?: number;
+}
+
+export interface ModelFeatures {
+  /** Sharp forebody chines (F-22, Su-57, J-20, J-35). */
+  chines?: boolean;
+  /** Infra-red search and track ball ahead of the windscreen. */
+  irst?: boolean;
+  /** Fixed refuelling probe on this side of the nose. */
+  probe?: 'L' | 'R';
+  /** Gun muzzle: x (m), y (m) and z (fraction). */
+  gun?: [number, number, number];
+  /** Where the radome ends (fraction of the length). Default 0.1. */
+  radome?: number;
+  /** Ventral weapons bay doors: z start / end (fractions) and half width (m). */
+  bay?: [number, number, number];
+  /** A second, raised dorsal fairing behind the canopy: [z0, z1, half width, height] (fractions, m). */
+  spine?: [number, number, number, number];
+  /** Tail sting between the engines. Default true on twins. */
+  sting?: boolean;
+  /** Arrestor hook position (fraction). */
+  hook?: number;
 }
 
 /** Parameters for the procedural jet builder (see aircraft/ProceduralJet.ts). */
 export interface ModelSpec {
   length: number;
-  /** Fuselage cross sections: [z fraction 0(nose)..1(tail), half width, half height, y centre]. */
-  sections: [number, number, number, number][];
+  /** Fuselage cross sections: [z fraction 0(nose)..1(tail), half width, half height, y centre, half height below, top exponent, bottom exponent]. */
+  sections: Section[];
   /** Cross-section squareness: 2 = ellipse, 4 = boxy. Default 2.5. */
   shapeN?: number;
   wing: WingSpec;
@@ -95,16 +154,32 @@ export interface ModelSpec {
   canard?: Omit<TailplaneSpec, 'dihedral'>;
   fins: FinSpec[];
   intakes: IntakeSpec[];
+  pods?: PodSpec[];
   engines: 1 | 2;
   /** Engine centre-line offset when twin (m). */
   engineSpacing?: number;
   nozzleRadius: number;
+  /** Nozzle width over height (default 1). */
+  nozzleAspect?: number;
+  /** Nozzle exit position (fraction of the length). Default just behind the end of the fuselage. */
+  nozzleZ?: number;
+  /** Nozzle height above the centre line (default: the last fuselage station's). */
+  nozzleY?: number;
   /** Nozzles tilt with pitch/yaw input. */
   vectoringNozzles?: boolean;
+  /** Start of the canopy (fraction of the length) and its glass length (m). */
   canopyZ: number;
   canopyLen?: number;
+  /** Half width and height of the bubble (m). */
+  canopyW?: number;
+  canopyH?: number;
+  /** Two seats in tandem under one long canopy. */
+  tandem?: boolean;
   /** Dorsal airbrake panel. */
   airbrake?: boolean;
+  features?: ModelFeatures;
+  /** Landing gear placement: main wheel offset (m), main leg z and nose leg z (fractions). */
+  gear?: { mainX?: number; mainZ?: number; noseZ?: number; mainR?: number; noseR?: number };
   colors: { body: number; accent: number; dark: number; camo?: number };
 }
 
@@ -145,9 +220,10 @@ export function cameraFor(def: AircraftDef): { distance: number; height: number;
     if (f >= secs[i][0] && f <= secs[i + 1][0]) top = secs[i][3] + secs[i][2];
   }
   const o = def.camera ?? {};
+  const glass = def.model.canopyLen ?? 2;
   return {
     distance: o.distance ?? L * 1.72,
     height: o.height ?? L * 0.36,
-    cockpit: o.cockpit ?? [0, top + 0.12, -L / 2 + f * L - 0.1],
+    cockpit: o.cockpit ?? [0, top + 0.2, -L / 2 + f * L + glass * 0.35],
   };
 }
