@@ -134,6 +134,12 @@ export class FlightModel {
   scrape = 0;
   /** Currently over a carrier deck. */
   onDeck = false;
+  /** The catapult shuttle is pulling us. */
+  catapult = false;
+  /** True for one step when a catapult launch starts (the game plays the effects). */
+  catapultStart = false;
+  /** Seconds left of the automatic climb-out after a catapult launch (the game steers the nose up while it runs). */
+  launchAssist = 0;
 
   constructor(public def: AircraftDef, public difficulty: DifficultyDef) {}
 
@@ -156,6 +162,9 @@ export class FlightModel {
     this.scrape = 0;
     this.wreck = false;
     this.wobT = 0;
+    this.catapult = false;
+    this.catapultStart = false;
+    this.launchAssist = 0;
   }
 
   forward(out: Vector3): Vector3 { return out.set(0, 0, -1).applyQuaternion(this.quat); }
@@ -245,8 +254,26 @@ export class FlightModel {
     const thrustAcc = G0 * tw * Math.pow(rho, FLIGHT.thrustDensityExp) * mods.thrust;
 
     _acc.set(0, 0, 0).addScaledVector(_fwd, thrustAcc).addScaledVector(_lift, liftAcc).addScaledVector(_side, sideAcc).addScaledVector(_vhat, -dragAcc);
-    // carrier catapult: full throttle on the deck flings the aircraft off the bow
-    if (this.onDeck && this.grounded && c.throttle > 0.85 && speed < 98) _acc.addScaledVector(_fwd, 40);
+    // carrier catapult: throttle to the stop on the deck and the shuttle takes over until launch speed, even if the throttle is
+    // released. Once it lets go (or the bow is reached) the climb-out assist starts.
+    this.catapultStart = false;
+    if (this.launchAssist > 0) this.launchAssist = Math.max(0, this.launchAssist - dt);
+    if (this.onDeck && this.grounded) {
+      if (!this.catapult && c.throttle > 0.9 && speed < 25) {
+        this.catapult = true;
+        this.catapultStart = true;
+      }
+      if (this.catapult) {
+        if (speed < FLIGHT.catapultSpeed) _acc.addScaledVector(_fwd, FLIGHT.catapultAccel);
+        else {
+          this.catapult = false;
+          this.launchAssist = 3.4;
+        }
+      }
+    } else if (this.catapult) {
+      this.catapult = false;
+      this.launchAssist = 3.4;
+    }
     // load factor along the pilot's "up" (specific force: gravity excluded)
     const gInst = _acc.dot(_up) / G0;
     this.gLoad += (gInst - this.gLoad) * Math.min(1, dt * 8);
@@ -444,7 +471,7 @@ export class FlightModel {
     const gearDown = this.gearPos > 0.85;
     // rough ground slows an aircraft hard, a belly slide harder still
     // a carrier deck: the arrestor wire catches us (no brake key needed)
-    const decel = this.onDeck && c.throttle < 0.5 ? 3.2 * G0 : (smooth ? Math.max(braking ? FLIGHT.brakeFriction * (diff.id === 'arcade' ? 1.2 : 1) : c.throttle < 0.08 && !c.afterburner ? FLIGHT.idleRollFriction : FLIGHT.rollingFriction, gearDown ? 0 : 0.55) : gearDown ? (braking ? 0.75 : 0.55) : 0.8) * G0;
+    const decel = this.onDeck && !this.catapult && c.throttle < 0.5 ? 3.2 * G0 : (smooth ? Math.max(braking ? FLIGHT.brakeFriction * (diff.id === 'arcade' ? 1.2 : 1) : c.throttle < 0.08 && !c.afterburner ? FLIGHT.idleRollFriction : FLIGHT.rollingFriction, gearDown ? 0 : 0.55) : gearDown ? (braking ? 0.75 : 0.55) : 0.8) * G0;
     this.scrape = smooth ? 0 : this.speed;
     vs = Math.max(0, vs - decel * dt);
     this.vel.x = fx * vs;

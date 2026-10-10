@@ -53,6 +53,9 @@ export const FLIGHT = {
 
   // --- ground ---------------------------------------------------------------------------
   rollingFriction: 0.06,
+  /** Carrier catapult: acceleration (m/s^2) and the speed (m/s) at which the shuttle lets go. */
+  catapultAccel: 46,
+  catapultSpeed: 122,
   /** Throttle closed on the ground: engine drag and light brake drag, in g, so a rollout always ends inside a runway. */
   idleRollFriction: 0.3,
   brakeFriction: 1.6,

@@ -651,6 +651,9 @@ export class Game {
     c.afterburner = false;
     c.airbrake = false;
     this.afterSpawn();
+    const alt = this.settings.value.controlScheme === 'mouse-throttle-ws';
+    const key = this.input.codes(alt ? 'pitchUp' : 'throttleUp').map(codeLabel)[0] ?? 'throttle up';
+    this.say(`HOLD ${key} TO FULL THROTTLE  =  CATAPULT LAUNCH`, 5);
   }
 
   spawnRunway(): void {
@@ -985,6 +988,37 @@ export class Game {
       c.yaw = clamp(this.cmd.yaw + this.kb.yaw, -1, 1);
       void s;
 
+      // carrier catapult launch: shake and a call-out when the shuttle fires, then the nose is steered up through the climb-out
+      // with full power, and the gear is raised once clear of the deck. (All difficulties: launching should be easy.)
+      if (f.catapultStart) {
+        this.say('CATAPULT LAUNCH', 2);
+        this.rig.addShake(0.7);
+        this.audio.explosion(f.pos, 8);
+        this.deckLaunched = true;
+      }
+      if (f.catapult || f.launchAssist > 0) {
+        c.throttle = 1;
+        c.afterburner = true;
+        if (f.speed > 70 || f.launchAssist > 0) {
+          f.forward(_fwd);
+          _fwd.y = 0;
+          if (_fwd.lengthSq() < 1e-6) _fwd.set(0, 0, -1);
+          _fwd.normalize();
+          const a = f.launchAssist > 0 ? 13 * DEG : 6 * DEG;
+          this.aim.aim.set(_fwd.x * Math.cos(a), Math.sin(a), _fwd.z * Math.cos(a));
+          this.aim.compute(f, diff, this.cmd);
+          c.pitch = this.cmd.pitch;
+          c.roll = this.cmd.roll;
+          c.yaw = this.cmd.yaw;
+        }
+      }
+      if (this.deckLaunched && !f.grounded && !f.catapult && f.agl > 30 && f.speed > 95 && c.gearDown) {
+        c.gearDown = false;
+        this.deckLaunched = false;
+        this.say('GEAR UP', 1.4);
+      }
+      if (this.deckLaunched && f.grounded && !f.catapult && f.speed < 20 && f.launchAssist <= 0) this.deckLaunched = false;
+
       // arcade quality of life: tuck the gear away once clearly airborne and fast. Never near an airstrip: that is where you
       // want it down (a landing approach, or a touch-and-go), and it must stay down until you raise it yourself.
       if (diff.id === 'arcade' && c.gearDown && f.gearPos > 0.99 && !f.grounded && f.agl > 120 && f.speed > 130 && this.distToStrip() > 5000) {
@@ -1147,6 +1181,7 @@ export class Game {
 
   /** What is actually being played (a carrier sortie on a map with no sea runs as team deathmatch). */
   private mode: SortieMode = 'training';
+  private deckLaunched = false;
   private carrierWarn = 1;
   private endTimer = 0;
   private briefNote = '';

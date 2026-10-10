@@ -141,8 +141,8 @@ Terrain is generated per map from a seed (`src/world/generators`: `archipelago`,
 - **Carrier Strike** (its own map, **Cobalt Sea**: open ocean, an island chain across the middle, an airfield island behind each fleet; there is no
   map choice for this mode): each team has one **carrier** (a 400 m anchored flight deck) with two
   **destroyers** (guns and surface-to-air missiles) and two **submarines** (surfaced, with missiles) steaming round it. Sink the other
-  carrier before yours is sunk. You have **infinite lives** and choose where each sortie starts, from the **carrier deck** (full
-  throttle and the catapult flings you off the bow) or **in the air** over your fleet (press **1** or **2** on the respawn screen). Land
+  carrier before yours is sunk. You have **infinite lives** and choose where each sortie starts, from the **carrier deck** (hold throttle up to full and the catapult takes over: it flings you off the bow at about 120 m/s,
+  steers the nose up, holds full power and raises the gear for you) or **in the air** over your fleet (press **1** or **2** on the respawn screen). Land
   on your own deck (gear down, throttle closed: the arrestor wire stops you in about 100 m) and stop to rearm and repair, the same
   10 / 20 seconds as on a runway. Select bombs (**4**) or rockets (**3**) and cycle to a ship with **Tab**; a bomb does about a
   ninth of a carrier, escorts take one or two. Some AI pilots on each side carry bombs and fly strike runs on your carrier, so you

@@ -142,6 +142,81 @@ function polySlab(pts: Vector3[], origin: Vector3, n: Vector3, thick: (p: Vector
   return g;
 }
 
+/** Half thickness of a NACA 4-digit style section as a fraction of the maximum thickness (0.5 at about 30% chord, 0 at both ends). */
+function foilHalf(s: number): number {
+  const q = 0.2969 * Math.sqrt(s) - 0.126 * s - 0.3516 * s * s + 0.2843 * s * s * s - 0.1015 * s * s * s * s - 0.0021 * s;
+  return (Math.max(0, q) / 0.1002) * 0.5;
+}
+
+/**
+ * A lifting surface with a real aerofoil section: rounded leading edge, maximum thickness a third of the way back, sharp
+ * trailing edge, closed at both ends. `LE(t)` and `TE(t)` give the leading and trailing edge at span station t (0..1) in
+ * absolute coordinates, `n` is the thickness direction, `thick(t)` the maximum thickness there. The patch covers span
+ * t0..t1 and chord fraction s0..s1 (so a flap is the rear part of the same wing). Positions are relative to `origin` so a
+ * control surface can hinge about it. Chord points are cosine-spaced near a leading edge so the nose is round.
+ */
+function foilPatch(
+  LE: (t: number) => Vector3, TE: (t: number) => Vector3, t0: number, t1: number, s0: number, s1: number,
+  n: Vector3, thick: (t: number) => number, origin: Vector3, nSpan = 3, nChord = 9,
+): BufferGeometry {
+  const sList: number[] = [];
+  for (let i = 0; i <= nChord; i++) {
+    const u = i / nChord;
+    sList.push(s0 + (s1 - s0) * (s0 < 0.02 ? 1 - Math.cos((u * Math.PI) / 2) : u));
+  }
+  const loop = 2 * (nChord + 1);
+  const pos: number[] = [];
+  const uv: number[] = [];
+  const a = new Vector3();
+  const chord = new Vector3();
+  const p = new Vector3();
+  const useXZ = Math.abs(n.y) > 0.5;
+  const useZY = !useXZ && Math.abs(n.x) > 0.5;
+  const put = (v: Vector3): void => {
+    pos.push(v.x - origin.x, v.y - origin.y, v.z - origin.z);
+    if (useXZ) uv.push(v.x / SKIN_TILE, v.z / SKIN_TILE);
+    else if (useZY) uv.push(v.z / SKIN_TILE, v.y / SKIN_TILE);
+    else uv.push(v.x / SKIN_TILE, v.y / SKIN_TILE);
+  };
+  for (let j = 0; j <= nSpan; j++) {
+    const t = t0 + ((t1 - t0) * j) / nSpan;
+    a.copy(LE(t));
+    chord.copy(TE(t)).sub(a);
+    const T = thick(t);
+    for (let i = 0; i <= nChord; i++) {
+      const s = sList[i];
+      p.copy(a).addScaledVector(chord, s).addScaledVector(n, foilHalf(s) * T);
+      put(p);
+    }
+    for (let i = nChord; i >= 0; i--) {
+      const s = sList[i];
+      p.copy(a).addScaledVector(chord, s).addScaledVector(n, -foilHalf(s) * T);
+      put(p);
+    }
+  }
+  const idx: number[] = [];
+  for (let j = 0; j < nSpan; j++) {
+    for (let k = 0; k < loop; k++) {
+      const a0 = j * loop + k;
+      const b0 = j * loop + ((k + 1) % loop);
+      const c0 = a0 + loop;
+      const d0 = b0 + loop;
+      idx.push(a0, c0, b0, b0, c0, d0);
+    }
+  }
+  // end caps
+  for (const j of [0, nSpan]) {
+    const base = j * loop;
+    for (let k = 1; k < loop - 1; k++) idx.push(base, base + k + 1, base + k);
+  }
+  const g = new BufferGeometry();
+  g.setAttribute('position', new Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new Float32BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+
 interface SecAt {
   hw: number;
   hh: number;
@@ -346,14 +421,27 @@ export class JetModel implements ModelHandle {
     return g;
   }
 
+  /** A pivoting aerofoil surface (aileron, flap, rudder, tailplane): geometry is relative to the pivot. */
+  private foilSurface(
+    LE: (t: number) => Vector3, TE: (t: number) => Vector3, t0: number, t1: number, s0: number, s1: number, pivot: Vector3, axis: Vector3,
+    n: Vector3, thick: (t: number) => number, kind: Kind, side: number, parent: Group,
+  ): Group {
+    const g = new Group();
+    g.position.copy(pivot);
+    this.mesh(foilPatch(LE, TE, t0, t1, s0, s1, n, thick, pivot), this.mats.flat, g);
+    parent.add(g);
+    this.movers.push({ g, axis: axis.clone().normalize(), kind, side });
+    return g;
+  }
+
   // ---- fuselage -------------------------------------------------------------------------------
 
   private buildFuselage(spec: ModelSpec): void {
     const L = spec.length;
     const n = spec.shapeN ?? 2.5;
-    const secs = refineSections(spec.sections, 3);
+    const secs = refineSections(spec.sections, 4);
     const rings: Ring[] = secs.map(([f, hw, hh, yc]) => ({ z: -L / 2 + f * L, hw, hh, cx: 0, cy: yc }));
-    this.mesh(loft(rings, n, 30), this.mats.body);
+    this.mesh(loft(rings, n, 40), this.mats.body);
     this.fuselageDetail(spec, secs, n);
 
     // twin-engine jets with widely spaced engines get distinct nacelles (Flanker family, Su-57)
@@ -391,15 +479,17 @@ export class JetModel implements ModelHandle {
       const LE = (t: number) => rootLE.clone().lerp(tipLE, t);
       const TE = (t: number) => rootTE.clone().lerp(tipTE, t);
       const hinge = (t: number) => TE(t).lerp(LE(t), hingeC);
+      const thickT = (t: number) => lerp(w.thickness, w.thickness * 0.34, t);
       const thick = (p: Vector3) => lerp(w.thickness, w.thickness * 0.34, clamp((Math.abs(p.x) - xr) / half, 0, 1));
       const origin = new Vector3();
       const pg = s > 0 ? this.parts.wingR : this.parts.wingL;
+      const sH = 1 - hingeC; // chord fraction of the hinge line
 
-      this.mesh(polySlab([rootLE, tipLE, hinge(1), hinge(0)], origin, up, thick), this.mats.flat, pg);
-      // inboard flap, outboard aileron: both hinge about the same line (outward axis)
+      // the fixed wing is an aerofoil from the leading edge to the hinge line; flap and aileron are the rear of the same section
+      this.mesh(foilPatch(LE, TE, 0, 1, 0, sH, up, thickT, origin, 5, 10), this.mats.flat, pg);
       const axis = hinge(1).sub(hinge(0));
-      this.surface([hinge(0), hinge(fs), TE(fs), TE(0)], hinge(fs * 0.5), axis, up, thick, 'flap', s, this.mats.flat, pg);
-      this.surface([hinge(fs), hinge(1), TE(1), TE(fs)], hinge((fs + 1) / 2), axis, up, thick, 'ail', s, this.mats.flat, pg);
+      this.foilSurface(LE, TE, 0, fs, sH, 1, hinge(fs * 0.5), axis, up, thickT, 'flap', s, pg);
+      this.foilSurface(LE, TE, fs, 1, sH, 1, hinge((fs + 1) / 2), axis, up, thickT, 'ail', s, pg);
 
       if (w.lerx) {
         const reach = w.lerx.reach;
@@ -415,15 +505,16 @@ export class JetModel implements ModelHandle {
         nose.position.copy(pod.position).add(new Vector3(0, 0, -1.3));
       } else {
         // wingtip accent tab (team colour)
-        const tab = [P(xr + half - 0.55, z0 + w.sweep + w.tipChord * 0.1), P(xr + half - 0.55, z0 + w.sweep + w.tipChord * 0.95), tipTE, tipLE];
-        this.mesh(polySlab(tab, origin, up, () => w.thickness * 0.36), this.mats.accent, pg);
+        // team-colour band on the outer wing: a skin over the same aerofoil
+        this.mesh(foilPatch(LE, TE, 1 - 0.55 / half, 1, 0.04, 0.96, up, (t) => thickT(t) * 1.04 + 0.012, origin, 2, 10), this.mats.accent, pg);
       }
       this.wingtips.push(tipTE.clone().add(new Vector3(0, 0, -w.tipChord * 0.2)));
 
       // leading-edge slat seam, flap-track fairings and a navigation light on the tip
       const chord = (t: number) => lerp(w.rootChord, w.tipChord, t);
-      const slat = (a: number, b: number) => [LE(a), LE(b), LE(b).add(new Vector3(0, 0, chord(b) * 0.13)), LE(a).add(new Vector3(0, 0, chord(a) * 0.13))];
-      this.mesh(polySlab(slat(0.22, 0.96), origin, up, (p) => thick(p) + 0.035), this.mats.dark, pg);
+      // leading-edge slat: a darker skin over the front of the outer wing
+      this.mesh(foilPatch(LE, TE, 0.22, 0.96, 0.015, 0.14, up, (t) => thickT(t) * 1.05 + 0.014, origin, 4, 5), this.mats.dark, pg);
+      void thick;
       for (const t of [0.14, 0.34, 0.62, 0.84]) {
         const fairing = this.mesh(new SphereGeometry(1, 8, 6), this.mats.dark, pg);
         fairing.scale.set(0.07, 0.06 * (1 - t * 0.5), chord(t) * 0.16 + 0.2);
@@ -466,6 +557,48 @@ export class JetModel implements ModelHandle {
       spine.push({ z: -L / 2 + f * L, hw, hh, cx: 0, cy: sec.yc + sec.hh - 0.04 + hh * 0.5 });
     }
     this.mesh(loft(spine, 2.4, 14), this.mats.body);
+    // wing-root fillets: a smooth fairing where each wing meets the body
+    {
+      const w = spec.wing;
+      const z0 = -L / 2 + w.zRoot * L;
+      const xr = secAt(spec, w.zRoot + 0.08).hw * 0.8;
+      for (const s of [1, -1]) {
+        const rings: Ring[] = [];
+        for (let i = 0; i <= 6; i++) {
+          const t = i / 6;
+          const k = Math.pow(Math.sin(Math.PI * (0.06 + t * 0.88)), 0.8);
+          const z = z0 - 0.4 + (w.rootChord * 0.95 + 0.4) * t;
+          const sec = secAt(spec, (z + L / 2) / L);
+          rings.push({ z, hw: 0.34 * k + 0.02, hh: 0.2 * k + 0.02, cx: s * Math.min(xr * 1.04, sec.hw * 0.95), cy: w.y + 0.03 });
+        }
+        this.mesh(loft(rings, 2.2, 12), this.mats.body);
+      }
+    }
+    // forebody chines on the modern designs: a thin sharp-edged shelf along each side of the nose
+    if (['f22', 'su57', 'j20', 'j35'].includes(this.def.id)) {
+      const f0 = 0.05;
+      const f1 = 0.34;
+      const mid = secAt(spec, (f0 + f1) / 2);
+      for (const s of [1, -1]) {
+        const xin = mid.hw * 0.7;
+        const ext = 0.42 + mid.hw * 0.28;
+        const zA = -L / 2 + f0 * L;
+        const zB = -L / 2 + f1 * L;
+        const y = mid.yc - mid.hh * 0.15;
+        const LEf = (t: number) => new Vector3(s * (xin + t * ext), y, zA + t * (zB - zA) * 0.62);
+        const TEf = (t: number) => new Vector3(s * (xin + t * ext), y, zB);
+        this.mesh(foilPatch(LEf, TEf, 0, 1, 0, 1, new Vector3(0, 1, 0), (t) => 0.1 - t * 0.07, new Vector3(), 4, 10), this.mats.body);
+      }
+    }
+    // infra-red search and track ball ahead of the windscreen
+    if (['su27', 'su35s', 'j16', 'mig29', 'su57'].includes(this.def.id)) {
+      const fz = spec.canopyZ - 0.05;
+      const sec = secAt(spec, fz);
+      const ball = this.mesh(new SphereGeometry(0.19, 12, 10), this.mats.glass);
+      ball.position.set(0, sec.yc + sec.hh + 0.04, -L / 2 + fz * L);
+      const mount = this.mesh(new CylinderGeometry(0.2, 0.24, 0.1, 12), this.mats.dark);
+      mount.position.set(0, sec.yc + sec.hh - 0.02, -L / 2 + fz * L);
+    }
     // arrestor hook stub under the tail
     const tail = spec.sections[spec.sections.length - 1];
     const hook = this.mesh(new BoxGeometry(0.07, 0.07, 1.5), this.mats.dark);
@@ -493,8 +626,9 @@ export class JetModel implements ModelHandle {
         const pr = rootLE.clone().lerp(rootTE, pivotFrac);
         const pt = tipLE.clone().lerp(tipTE, pivotFrac);
         const axis = pt.clone().sub(pr);
-        const thick = (p: Vector3) => lerp(thickR, thickR * 0.4, clamp((Math.abs(p.x) - xr) / half, 0, 1));
-        this.surface([rootLE, tipLE, tipTE, rootTE], pr, axis, up, thick, kind, s, this.mats.flat, parent);
+        const LEf = (u: number) => rootLE.clone().lerp(tipLE, u);
+        const TEf = (u: number) => rootTE.clone().lerp(tipTE, u);
+        this.foilSurface(LEf, TEf, 0, 1, 0, 1, pr, axis, up, (u) => lerp(thickR, thickR * 0.4, u), kind, s, parent);
       }
     };
     if (spec.hstab) allMoving(spec.hstab, 'stab', 0.45, 0.22, this.parts.tail);
@@ -538,21 +672,22 @@ export class JetModel implements ModelHandle {
       const LE = (t: number) => rootLE.clone().lerp(tipLE, t);
       const TE = (t: number) => rootTE.clone().lerp(tipTE, t);
       const hinge = (t: number) => TE(t).lerp(LE(t), hingeC);
-      const thick = (p: Vector3) => lerp(0.24, 0.09, clamp(Math.abs(p.y - yb) / Math.abs(h), 0, 1));
+      const thickT = (t: number) => lerp(0.26, 0.1, t);
       const hasRudder = (f.rudder ?? true) && !ventral;
       const origin = new Vector3();
+      const sH = 1 - hingeC;
       if (hasRudder) {
-        this.mesh(polySlab([rootLE, tipLE, hinge(1), hinge(s0), TE(s0), rootTE], origin, xAxis, thick), this.mats.flat, grp);
+        this.mesh(foilPatch(LE, TE, 0, 1, 0, sH, xAxis, thickT, origin, 4, 10), this.mats.flat, grp);
+        this.mesh(foilPatch(LE, TE, 0, s0, sH, 1, xAxis, thickT, origin, 1, 6), this.mats.flat, grp);
         const g = new Group();
         g.position.copy(hinge(s0));
-        this.mesh(polySlab([hinge(s0), hinge(1), TE(1), TE(s0)], hinge(s0), xAxis, thick), this.mats.flat, g);
+        this.mesh(foilPatch(LE, TE, s0, 1, sH, 1, xAxis, thickT, hinge(s0), 3, 6), this.mats.flat, g);
         grp.add(g);
         this.movers.push({ g, axis: hinge(1).sub(hinge(s0)).normalize(), kind: 'rudder', side: 1 });
         // team stripe near the top
-        const top = [LE(0.84), TE(0.84), TE(1), LE(1)];
-        this.mesh(polySlab(top, origin, xAxis, (p) => thick(p) + 0.03), this.mats.accent, grp);
+        this.mesh(foilPatch(LE, TE, 0.84, 1, 0.04, 0.96, xAxis, (t) => thickT(t) * 1.04 + 0.014, origin, 2, 8), this.mats.accent, grp);
       } else {
-        this.mesh(polySlab([rootLE, tipLE, tipTE, rootTE], origin, xAxis, thick), this.mats.flat, grp);
+        this.mesh(foilPatch(LE, TE, 0, 1, 0, 1, xAxis, thickT, origin, 4, 10), this.mats.flat, grp);
       }
       if (!ventral) {
         // antenna cap and a white tail light
@@ -599,18 +734,25 @@ export class JetModel implements ModelHandle {
 
     // canopy: a teardrop bubble sitting in the fuselage, with bows, rails, a seat and a pilot inside
     const sec = secAt(spec, spec.canopyZ);
-    const len = (spec.canopyLen ?? 2.0) * 1.15;
+    const len = (spec.canopyLen ?? 2.0) * 1.4;
     const hwMax = Math.min(sec.hw * 0.62, 0.64);
-    const hhMax = 0.36;
+    const hhMax = Math.max(0.34, Math.min(0.46, sec.hh * 0.5));
     const zc = -L / 2 + spec.canopyZ * L - len * 0.12;
-    const prof: [number, number, number][] = [[0, 0.1, 0.12], [0.1, 0.52, 0.5], [0.26, 0.86, 0.88], [0.48, 1, 1], [0.7, 0.9, 0.84], [0.88, 0.58, 0.52], [1, 0.2, 0.16]];
+    const prof: [number, number, number][] = [
+      [0, 0.12, 0.1], [0.06, 0.34, 0.3], [0.14, 0.58, 0.55], [0.26, 0.82, 0.8], [0.4, 0.97, 0.96], [0.52, 1, 1], [0.66, 0.92, 0.88],
+      [0.8, 0.7, 0.62], [0.92, 0.4, 0.3], [1, 0.14, 0.1],
+    ];
     const bubble: Ring[] = prof.map(([t, w, h]) => {
       const s = secAt(spec, spec.canopyZ + (t * len - len * 0.12) / L);
       const base = s.yc + s.hh - 0.3;
       return { z: zc + t * len, hw: hwMax * w, hh: hhMax * h, cx: 0, cy: base + hhMax * h };
     });
-    this.mesh(loft(bubble, 2.2, 22), this.mats.glass);
-    for (const t of [0.12, 0.5, 0.9]) {
+    this.mesh(loft(bubble, 2.2, 26), this.mats.glass);
+    // windscreen frame across the front, then the bows
+    const wf = bubble[2];
+    const frame = this.mesh(new BoxGeometry(wf.hw * 1.7, 0.05, 0.14), this.mats.dark);
+    frame.position.set(0, wf.cy - wf.hh * 0.98, wf.z);
+    for (const t of [0.14, 0.52, 0.92]) {
       const r = bubble[prof.findIndex((p) => p[0] >= t)];
       const bow = this.mesh(new TorusGeometry(1, 0.026, 5, 18, Math.PI).scale(r.hw * 1.04, r.hh * 1.04, 1), this.mats.dark);
       bow.position.set(0, r.cy - r.hh * 0.02, r.z);
