@@ -14,7 +14,7 @@ import { getAircraft } from '../data/aircraft';
 import { DIFFICULTIES } from '../data/difficulty';
 import { GRAVITY, STORES } from '../data/weapons';
 import { MAPS } from '../data/maps';
-import { FLIGHT, TERRAIN_ASSIST, WORLD_BOUNDARY } from '../data/tuning';
+import { AIM, FLIGHT, TERRAIN_ASSIST, WORLD_BOUNDARY } from '../data/tuning';
 import { MouseAim } from '../flight/MouseAim';
 import { scanTerrain, type TerrainThreat } from '../flight/TerrainAssist';
 import type { SurfaceInfo } from '../flight/FlightModel';
@@ -26,7 +26,7 @@ import { QUALITY, detectQuality, type QualityPreset } from '../render/quality';
 import { Combat } from '../weapons/Combat';
 import { Fighter } from '../weapons/Fighter';
 import { GROUPS, GROUP_LABEL } from '../weapons/WeaponSystem';
-import type { CombatEvent } from '../weapons/types';
+import type { CombatEvent, Target } from '../weapons/types';
 import type { CombatHud } from '../ui/CombatHud';
 import type { Contact, MinimapData } from '../ui/Minimap';
 import { Hud, type HudData } from '../ui/Hud';
@@ -332,7 +332,7 @@ export class Game {
       case 'timeOfDay': this.world?.setTimeOfDay(s.timeOfDay); break;
       case 'difficulty':
         if (this.player) this.player.flight.difficulty = DIFFICULTIES[s.difficulty];
-        if (this.fighter) this.fighter.damageScale = DIFFICULTIES[s.difficulty].damageTaken;
+        if (this.fighter) this.applyAssists();
         break;
       case 'cameraShake':
       case 'reduceMotion':
@@ -438,12 +438,62 @@ export class Game {
     if (this.fighter) this.combat.removeFighter(this.fighter);
     const prev = this.fighter?.stats;
     this.fighter = new Fighter('You', 'blue', p, true);
-    this.fighter.damageScale = DIFFICULTIES[this.settings.value.difficulty].damageTaken;
+    this.applyAssists();
     if (prev) this.fighter.stats = prev;
     this.combat.addFighter(this.fighter);
     this.buildHudModules();
     this.trails?.reset();
     this.spawnAir();
+  }
+
+  /** Copy the difficulty's player assists onto the player's fighter. */
+  private applyAssists(): void {
+    const d = DIFFICULTIES[this.settings.value.difficulty];
+    this.fighter.damageScale = d.damageTaken;
+    this.fighter.aimAssist = d.aimAssist;
+    this.fighter.lockSpeed = d.lockSpeed;
+  }
+
+  private autoCmTimer = 0;
+  private autoTargetTimer = 0;
+
+  /** Arcade: flares or chaff go out on their own when a missile is about to hit. */
+  private autoCountermeasures(dt: number): void {
+    this.autoCmTimer -= dt;
+    if (this.autoCmTimer > 0 || !DIFFICULTIES[this.settings.value.difficulty].autoCountermeasures) return;
+    const th = this.combat.threats(this.fighter);
+    if (!th.length || th[0].eta > 2.6) return;
+    const kind = th[0].missile.kind === 'ir' ? 'flare' : 'chaff';
+    if (this.combat.dispense(this.fighter, kind, kind === 'flare' ? 2 : 1)) {
+      this.autoCmTimer = kind === 'flare' ? 0.7 : 1.4;
+      this.say(kind === 'flare' ? 'AUTO FLARES' : 'AUTO CHAFF', 0.8);
+    }
+  }
+
+  /** Always have the nearest enemy selected unless the player picked something, so the target box and arrow are on screen. */
+  private autoTarget(dt: number): void {
+    this.autoTargetTimer -= dt;
+    if (this.autoTargetTimer > 0) return;
+    this.autoTargetTimer = 0.6;
+    const fg = this.fighter;
+    const w = fg.weapons;
+    if (fg.state !== 'alive' || w.group >= 2) return;
+    if (w.target && w.target.alive) return;
+    let best: Target | null = null;
+    let bd = Infinity;
+    for (const t of this.combat.targets(fg.team)) {
+      if (t.kind !== 'air') continue;
+      const d = t.pos.distanceToSquared(fg.pos);
+      if (d < bd) {
+        bd = d;
+        best = t;
+      }
+    }
+    if (best && bd < 16000 * 16000) {
+      w.target = best;
+      w.lock.progress = 0;
+      w.lock.locked = false;
+    }
   }
 
   private buildHudModules(): void {
@@ -724,8 +774,8 @@ export class Game {
       quat: p.object.quaternion,
       speedNorm: p.flight.speed / def.flight.maxSpeed,
       ab: p.flight.abLevel,
-      distance: cf.distance,
-      height: cf.height,
+      distance: cf.distance * this.settings.value.cameraDistance,
+      height: cf.height * (0.6 + 0.4 * this.settings.value.cameraDistance),
       cockpit: cf.cockpit,
     };
   }
@@ -818,6 +868,7 @@ export class Game {
       }
     }
 
+    this.autoCountermeasures(dt);
     this.combat.update(dt);
     this.range.update();
     this.skirmish?.update();
@@ -1123,6 +1174,7 @@ export class Game {
     this.hitK = Math.max(0, this.hitK - dt * 4);
     this.killK = Math.max(0, this.killK - dt * 1.4);
     this.hurtK = Math.max(0, this.hurtK - dt * 0.9);
+    this.autoTarget(dt);
     this.updateMatchHud();
     if (this.input.isDown('scoreboard')) this.scoreboard.show(this.scoreData());
     else this.scoreboard.hide();
@@ -1414,7 +1466,7 @@ export class Game {
     const fwd = new Vector3();
     return {
       player: this.player, world: this.world, rig: this.rig, input: this.input, aim: this.aim,
-      combat: this.combat, fighter: this.fighter, range: this.range, skirmish: this.skirmish, audio: this.audio,
+      tuning: { AIM, FLIGHT }, combat: this.combat, fighter: this.fighter, range: this.range, skirmish: this.skirmish, audio: this.audio,
       /** Open the hangar on an aircraft with a fixed camera (for screenshots). */
       hangarView: async (id: string, yaw = 0.9, pitch = 0.25, ab = false, gear = true, panels = false, wait = 1300) => {
         if (this.state !== 'hangar') this.openHangar();

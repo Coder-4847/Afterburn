@@ -19,8 +19,8 @@ export const FLIGHT = {
   rollResponse: 11,
   yawResponse: 5,
   /** Negative-G pushing is weaker than pulling. */
-  negGLimit: 4,
-  negPitchFraction: 0.7,
+  negGLimit: 7,
+  negPitchFraction: 0.85,
 
   // --- control authority vs airspeed (multiples of stall speed) --------------------------
   authorityMin: 0.22,
@@ -92,9 +92,16 @@ export const AIM = {
   trimGain: 1.6,
   /** ...but never more than this (rad), so slow-speed rotation does not over-pitch. */
   trimMax: 8 * Math.PI / 180,
+  /** Scale on the roll command produced by the aim controller (keyboard roll is not affected). */
+  rollScale: 0.7,
+  /** Bank allowed for a correction of th radians: bankBase + bankGain * th (capped by the difficulty). */
+  bankBase: 0.8,
+  bankGain: 1.6,
+  /** How much of the rudder is given up once the controller starts rolling (0 = keep all). */
+  yawSuppress: 0.2,
   rollEngageMin: 0.035,
   rollEngageMax: 0.22,
-  yawWeight: 0.85,
+  yawWeight: 1,
   /** Below this angle the aim may "push" (negative G) instead of rolling inverted. */
   pushLimit: 0.42,
   pushRelease: 0.58,

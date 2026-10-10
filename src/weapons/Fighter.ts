@@ -54,6 +54,9 @@ export class Fighter implements Target, Attacker {
   lastHit: { who: Attacker; weapon: string; t: number } | null = null;
   /** Multiplier on incoming damage (the player's difficulty setting). */
   damageScale = 1;
+  /** 0..1 gun aim assist and a multiplier on lock speed (set from the player's difficulty). */
+  aimAssist = 0;
+  lockSpeed = 1;
   /** Seconds since the last time this fighter was hit (HUD flash, AI reactions). */
   sinceHit = 99;
   /** For debris and effects: the part groups that are currently gone. */

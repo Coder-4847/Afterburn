@@ -56,6 +56,8 @@ export interface Settings {
   reduceMotion: boolean;
   /** HUD text and panel size multiplier. */
   hudScale: number;
+  /** Chase camera distance multiplier (smaller = the jet looks bigger). */
+  cameraDistance: number;
   highContrast: boolean;
   minimap: boolean;
   /** Selected aircraft id (see data/aircraft). */
@@ -63,7 +65,7 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  version: 2,
+  version: 3,
   quality: 'auto',
   resolutionScale: 1,
   adaptiveResolution: true,
@@ -72,7 +74,7 @@ export const DEFAULT_SETTINGS: Settings = {
   timeOfDay: 'day',
   mouseSensitivity: 1,
   invertY: false,
-  controlScheme: 'mouse',
+  controlScheme: 'mouse-throttle-ws',
   bindings: {},
   difficulty: 'arcade',
   terrainAssist: 'warn',
@@ -87,14 +89,15 @@ export const DEFAULT_SETTINGS: Settings = {
   drones: 'passive',
   mapId: 'coral',
   sortie: 'training',
-  teamSize: 3,
+  teamSize: 2,
   scoreLimit: 20,
   timeLimit: 10,
-  aiSkill: 'regular',
+  aiSkill: 'rookie',
   musicVolume: 0.5,
   colorblind: false,
   reduceMotion: false,
   hudScale: 1,
+  cameraDistance: 0.7,
   highContrast: false,
   minimap: true,
   aircraftId: 'f16c',
@@ -115,8 +118,15 @@ export class SettingsStore {
         const saved = JSON.parse(raw) as Partial<Settings>;
         // v2: the automatic pull-up is no longer on by default (it surprised people during landing approaches)
         if ((saved.version ?? 1) < 2) delete saved.terrainAssist;
+        // v3: new defaults for the control layout (A/D rudder, W/S throttle), team size and AI skill
+        if ((saved.version ?? 1) < 3) {
+          delete saved.controlScheme;
+          delete saved.bindings;
+          delete saved.teamSize;
+          delete saved.aiSkill;
+        }
         Object.assign(this.value, saved);
-        this.value.version = 2;
+        this.value.version = 3;
       }
       // older saves called the AI mode "skirmish"
       if ((this.value.sortie as string) === 'skirmish') this.value.sortie = 'tdm';

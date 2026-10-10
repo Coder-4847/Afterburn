@@ -192,7 +192,7 @@ export class CombatHudLayer {
     const pt = { x: 0, y: 0 };
     const margin = 40;
     let arrows = 0;
-    c.font = '600 10px ui-monospace, Consolas, monospace';
+    c.font = '700 12px ui-monospace, Consolas, monospace';
     c.textAlign = 'center';
     for (const k of d.contacts) {
       if (k.selected) continue; // the selected target gets the full box
@@ -200,9 +200,9 @@ export class CombatHudLayer {
       const inside = on && pt.x > margin && pt.x < w - margin && pt.y > margin && pt.y < h - margin;
       c.strokeStyle = P.foe;
       c.fillStyle = P.foe;
-      c.lineWidth = 1.8;
+      c.lineWidth = 2.6;
       if (inside) {
-        const s = 8;
+        const s = 12;
         c.beginPath();
         c.moveTo(pt.x, pt.y - s);
         c.lineTo(pt.x + s, pt.y);
@@ -228,15 +228,15 @@ export class CombatHudLayer {
         c.rotate(ang);
         c.globalAlpha = arrows === 1 ? 1 : 0.65;
         c.beginPath();
-        c.moveTo(11, 0);
-        c.lineTo(-7, -7);
-        c.lineTo(-3, 0);
-        c.lineTo(-7, 7);
+        c.moveTo(17, 0);
+        c.lineTo(-10, -11);
+        c.lineTo(-4, 0);
+        c.lineTo(-10, 11);
         c.closePath();
         c.fill();
         c.restore();
         c.globalAlpha = 1;
-        c.fillText((k.dist / 1000).toFixed(1), ax - Math.cos(ang) * 24, ay - Math.sin(ang) * 24 + 3);
+        c.fillText((k.dist / 1000).toFixed(1) + ' km', ax - Math.cos(ang) * 38, ay - Math.sin(ang) * 38 + 4);
       }
     }
     // text readout under the minimap

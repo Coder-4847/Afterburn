@@ -18,6 +18,12 @@ export interface DifficultyDef {
   liftMul: number;
   /** Multiplier on all damage the player takes (Arcade is forgiving, Realistic is not). */
   damageTaken: number;
+  /** 0..1: how strongly cannon rounds are steered onto a selected target that is close to the gun line. */
+  aimAssist: number;
+  /** Multiplier on how fast missile seekers lock (the player's). */
+  lockSpeed: number;
+  /** Flares / chaff are released automatically when a missile is about to hit. */
+  autoCountermeasures: boolean;
   /** Default terrain assist for this difficulty. */
   terrainAssist: TerrainAssist;
   /** Touchdown tolerances. */
@@ -35,7 +41,10 @@ export const DIFFICULTIES: Record<DifficultyId, DifficultyDef> = {
     stallRecovery: 1.3,
     gMul: 1.28,
     liftMul: 1.1,
-    damageTaken: 0.55,
+    damageTaken: 0.35,
+    aimAssist: 0.85,
+    lockSpeed: 2.2,
+    autoCountermeasures: true,
     terrainAssist: 'auto',
     landing: { sink: 9, roll: 35 * Math.PI / 180, speed: 150, pitchMin: -6 * Math.PI / 180, pitchMax: 22 * Math.PI / 180 },
   },
@@ -49,7 +58,10 @@ export const DIFFICULTIES: Record<DifficultyId, DifficultyDef> = {
     stallRecovery: 1,
     gMul: 1.12,
     liftMul: 1,
-    damageTaken: 0.8,
+    damageTaken: 0.7,
+    aimAssist: 0.5,
+    lockSpeed: 1.4,
+    autoCountermeasures: false,
     terrainAssist: 'warn',
     landing: { sink: 6, roll: 20 * Math.PI / 180, speed: 125, pitchMin: -3 * Math.PI / 180, pitchMax: 18 * Math.PI / 180 },
   },
@@ -64,6 +76,9 @@ export const DIFFICULTIES: Record<DifficultyId, DifficultyDef> = {
     gMul: 1,
     liftMul: 1,
     damageTaken: 1,
+    aimAssist: 0,
+    lockSpeed: 1,
+    autoCountermeasures: false,
     terrainAssist: 'warn',
     landing: { sink: 4, roll: 12 * Math.PI / 180, speed: 110, pitchMin: 0, pitchMax: 15 * Math.PI / 180 },
   },

@@ -86,7 +86,7 @@ export class MouseAim {
 
     // rudder takes care of small lateral errors without banking
     const yawE = Math.atan2(_a.x, -_a.z);
-    let yaw = clamp(yawE / AIM.yawFullError, -1, 1) * (1 - w * 0.85) * AIM.yawWeight;
+    let yaw = clamp(yawE / AIM.yawFullError, -1, 1) * (1 - w * AIM.yawSuppress) * AIM.yawWeight;
     if (behind) yaw = 0;
 
     fm.forward(_fwd);
@@ -94,18 +94,21 @@ export class MouseAim {
     fm.rightVec(_right);
     const bank = Math.atan2(-_right.y, _up.y); // + = right wing down
 
+    // a small correction must not snap the jet onto its side: allow only as much bank as the angle to the aim point earns
+    // (see AIM.bankBase / bankGain: a small correction banks less than a big one, up to the difficulty limit)
+    const maxBank = Math.min(diff.maxBank, AIM.bankBase + AIM.bankGain * th);
     // bank limit: in a level-ish turn, stop rolling past the limit (otherwise lift cannot also hold the weight up)
     const aimElev = Math.asin(clamp(this.aim.y, -1, 1));
     const noseElev = Math.asin(clamp(_fwd.y, -1, 1));
     // 'bank' and 'elevation' stop meaning anything near vertical, so the whole limiter fades out there
     const levelish = 1 - smoothstep(0.45, 0.85, Math.abs(noseElev));
     if (aimElev < 0.6 && aimElev > -0.45 && roll * bank > 0) {
-      roll *= 1 - smoothstep(diff.maxBank - 0.14, diff.maxBank, Math.abs(bank)) * levelish;
+      roll *= 1 - smoothstep(maxBank - 0.14, maxBank, Math.abs(bank)) * levelish;
     }
     if (aimElev < 0.6 && aimElev > -0.45) {
-      if (Math.abs(bank) > diff.maxBank) roll -= Math.sign(bank) * clamp((Math.abs(bank) - diff.maxBank) / 0.25, 0, 1) * 0.8 * levelish;
+      if (Math.abs(bank) > maxBank) roll -= Math.sign(bank) * clamp((Math.abs(bank) - maxBank) / 0.25, 0, 1) * 0.8 * levelish;
       // while banked near the limit, the pull would otherwise just climb: regulate the nose *elevation* toward the reticle's
-      const nearLimit = smoothstep(diff.maxBank * 0.55, diff.maxBank * 0.9, Math.abs(bank)) * levelish;
+      const nearLimit = smoothstep(maxBank * 0.55, maxBank * 0.9, Math.abs(bank)) * levelish;
       pitch -= nearLimit * clamp((noseElev - aimElev) / 0.1, -1, 1) * 1.3;
     }
 
@@ -118,7 +121,8 @@ export class MouseAim {
     }
 
     out.pitch = clamp(pitch, -1, 1);
-    out.roll = clamp(roll, -1, 1);
+    // the roll axis is very quick on these jets; a calmer roll reads as flying, a full-rate one as a barrel roll
+    out.roll = clamp(roll, -1, 1) * AIM.rollScale;
     out.yaw = clamp(yaw, -1, 1);
     return out;
   }

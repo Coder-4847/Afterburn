@@ -142,6 +142,11 @@ export interface MapDef {
   clouds?: CloudDef;
   /** Maps with no sea: a flat plane of this colour at height y fills the world beyond the terrain (and the water is hidden). */
   groundPlane?: { color: number; y: number };
+  /**
+   * The terrain generator works in "design" coordinates; the world is the design scaled by this factor in x and z
+   * (strips, spawn and boundary are already in world metres). Heights are not scaled.
+   */
+  designScale?: number;
   /** Short label for menus. */
   tagline?: string;
   /** Half-extent of the combat zone (m). Leaving it starts the return-to-combat countdown. */

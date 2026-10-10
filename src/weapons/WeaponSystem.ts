@@ -185,7 +185,7 @@ export class WeaponSystem {
       visible = false;
     }
     L.tracking = visible;
-    L.progress = visible ? Math.min(1, L.progress + dt / lockTime) : Math.max(0, L.progress - dt * 2.5);
+    L.progress = visible ? Math.min(1, L.progress + (dt * owner.lockSpeed) / lockTime) : Math.max(0, L.progress - dt * 2.5);
     L.locked = L.progress >= 1;
   }
 }

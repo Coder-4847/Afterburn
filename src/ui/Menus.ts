@@ -330,7 +330,8 @@ export class Menus {
     el('div', 'section', p, 'Controls');
     this.slider(p, 'Mouse sensitivity', 'mouseSensitivity', 0.2, 3, 0.05, (v) => v.toFixed(2));
     this.toggle(p, 'Invert Y axis', 'invertY');
-    this.select(p, 'Control scheme', 'controlScheme', [['mouse', 'Mouse aim, Shift/Ctrl throttle'], ['mouse-throttle-ws', 'Mouse aim, W/S throttle']]);
+    this.select(p, 'Control scheme', 'controlScheme', [['mouse-throttle-ws', 'W/S throttle, A/D rudder, Q/E roll'], ['mouse', 'Shift/Ctrl throttle, W/S manual pitch']]);
+    this.slider(p, 'Camera distance', 'cameraDistance', 0.4, 1.5, 0.05, (v) => Math.round(v * 100) + '%', 'Closer makes the jet look bigger');
     this.toggle(p, 'Camera shake', 'cameraShake');
 
     el('div', 'section', p, 'Combat');

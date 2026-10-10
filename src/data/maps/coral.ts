@@ -18,7 +18,7 @@ export const CORAL: MapDef = {
       { x: -6800, z: 500, rx: 2100, rz: 1500, rot: 10, peak: 62, rugged: 0.22, reef: true }, // Blue main
       { x: -5600, z: -5200, rx: 1650, rz: 1150, rot: -20, peak: 55, rugged: 0.2, reef: true },
       { x: -5200, z: 5400, rx: 1550, rz: 1150, rot: 25, peak: 55, rugged: 0.2, reef: true },
-      { x: 0, z: 200, rx: 2800, rz: 2100, rot: 30, peak: 500, rugged: 0.85, reef: true }, // central volcano
+      { x: 0, z: 200, rx: 2800, rz: 2100, rot: 30, peak: 380, rugged: 0.85, reef: true }, // central volcano
       { x: -800, z: -5600, rx: 1300, rz: 900, rot: 0, peak: 110, rugged: 0.5 },
       { x: 1200, z: 5000, rx: 1200, rz: 900, rot: 40, peak: 100, rugged: 0.5 },
       { x: 6800, z: -500, rx: 2100, rz: 1500, rot: 10, peak: 62, rugged: 0.22, reef: true }, // Red main

@@ -31,9 +31,9 @@ export interface SkillDef {
 }
 
 export const SKILLS: Record<AiSkill, SkillDef> = {
-  rookie: { label: 'Rookie', reaction: 1.5, aimErr: 0.032, gunAng: 0.07, gunRange: 650, missileCool: 38, cm: 0.35, bvr: 4500, g: 0.7 },
-  regular: { label: 'Regular', reaction: 0.8, aimErr: 0.016, gunAng: 0.045, gunRange: 850, missileCool: 26, cm: 0.65, bvr: 7000, g: 0.88 },
-  ace: { label: 'Ace', reaction: 0.3, aimErr: 0.006, gunAng: 0.032, gunRange: 1000, missileCool: 15, cm: 0.95, bvr: 10000, g: 1 },
+  rookie: { label: 'Rookie', reaction: 1.5, aimErr: 0.032, gunAng: 0.05, gunRange: 700, missileCool: 55, cm: 0.35, bvr: 4500, g: 0.7 },
+  regular: { label: 'Regular', reaction: 0.8, aimErr: 0.016, gunAng: 0.035, gunRange: 900, missileCool: 40, cm: 0.65, bvr: 7000, g: 0.88 },
+  ace: { label: 'Ace', reaction: 0.3, aimErr: 0.006, gunAng: 0.024, gunRange: 1000, missileCool: 24, cm: 0.95, bvr: 10000, g: 1 },
 };
 
 type Mode = 'patrol' | 'bvr' | 'wvr' | 'defend' | 'evade' | 'rtb';
@@ -150,7 +150,7 @@ export class PilotBrain implements Brain {
     if (evading || this.evadeT > 0) {
       this.mode = 'evade';
       if (!evading) _d.crossVectors(this.evadeLos, UP).multiplyScalar(this.evadeSide);
-      speed = fl.def.flight.maxSpeed * 0.8;
+      speed = Math.min(fl.def.flight.maxSpeed * 0.8, 400);
       ab = true;
     } else if (needsRtb && this.rtbBlock <= 0) {
       this.mode = 'rtb';
@@ -248,11 +248,11 @@ export class PilotBrain implements Brain {
     _f.y = 0;
     if (_f.lengthSq() < 1e-6) return true;
     _f.normalize();
-    const reach = clamp(fl.speed * 9, 2500, 6500);
+    const reach = clamp(fl.speed * 7, 1500, 4200);
     for (let k = 1; k <= 8; k++) {
       const d = (reach * k) / 8;
       const h = this.combat.env.surfaceAt(f.pos.x + _f.x * d, f.pos.z + _f.z * d, _surf).height;
-      if (f.pos.y + d * 0.25 - h < 250) return false;
+      if (f.pos.y + d * 0.3 - h < 250) return false;
     }
     return true;
   }
@@ -269,7 +269,7 @@ export class PilotBrain implements Brain {
     _f.y = 0;
     if (_f.lengthSq() < 1e-6) _f.set(0, 0, -1);
     _f.normalize();
-    const reach = clamp(fl.speed * 9, 2500, 6500);
+    const reach = clamp(fl.speed * 7, 1500, 4200);
     let best = 0;
     let bestClear = -1e9;
     for (const deg of RAYS) {
@@ -279,7 +279,7 @@ export class PilotBrain implements Brain {
         const d = (reach * k) / 7;
         const h = this.combat.env.surfaceAt(f.pos.x + _p.x * d, f.pos.z + _p.z * d, _surf).height;
         // a jet that needs to clear this point must climb: count the shortfall against how far away it is
-        clear = Math.min(clear, f.pos.y + d * 0.25 - h);
+        clear = Math.min(clear, f.pos.y + d * 0.3 - h);
       }
       // prefer going straight on unless another heading is clearly better
       const score = clear - Math.abs(deg) * 6;
@@ -296,7 +296,7 @@ export class PilotBrain implements Brain {
   // ---- behaviours ----------------------------------------------------------------------------
 
   private patrol(f: Fighter, dt: number, out: Vector3): number {
-    const R = 4200;
+    const R = this.boundary * 0.45;
     const tx = this.center.x + Math.cos(this.patrolAngle) * R;
     const tz = this.center.z + Math.sin(this.patrolAngle) * R;
     _p.set(tx - f.pos.x, 0, tz - f.pos.z);
@@ -304,7 +304,7 @@ export class PilotBrain implements Brain {
     out.copy(_p).normalize();
     out.y = clamp((this.patrolAlt - f.pos.y) / 400, -0.3, 0.3);
     void dt;
-    return f.aircraft.flight.def.flight.maxSpeed * 0.62;
+    return f.aircraft.flight.def.flight.maxSpeed * 0.45;
   }
 
   private goHome(f: Fighter, out: Vector3): number {
@@ -327,7 +327,7 @@ export class PilotBrain implements Brain {
       this.rtbBlock = 45;
       this.mode = 'patrol';
     }
-    return fl.def.flight.maxSpeed * 0.55;
+    return fl.def.flight.maxSpeed * 0.4;
   }
 
   /** Where to aim a gun to hit the target: relative-velocity intercept with bullet drop (same maths as the HUD pipper). */
@@ -374,7 +374,7 @@ export class PilotBrain implements Brain {
       // hard turn across the attacker's nose, pulling down a little to keep energy
       out.crossVectors(los, UP).multiplyScalar(this.breakSide);
       out.y = -0.25;
-      return maxV * 0.8;
+      return Math.min(maxV * 0.8, 380);
     }
 
     if (dist > 3000) {
@@ -398,7 +398,7 @@ export class PilotBrain implements Brain {
           this.crankSide = Math.random() < 0.5 ? -1 : 1;
         }
       }
-      return maxV * 0.88;
+      return Math.min(maxV * 0.6, 330);
     }
 
     // ---- within visual range: dogfight ----
@@ -439,11 +439,11 @@ export class PilotBrain implements Brain {
       this.burst -= dt;
       if (this.burst <= 0) this.burstRest = 0.5 + Math.random() * 0.9;
     }
-    if (this.burst <= 0 && this.burstRest <= 0 && dist < sk.gunRange && angLead < sk.gunAng) this.burst = 0.8;
+    if (this.burst <= 0 && this.burstRest <= 0 && dist < sk.gunRange * 1.15 && angLead < sk.gunAng * 1.4) this.burst = 1.1;
     if (this.burst > 0 && w.gunAmmo > 0) this.combat.fireGun(f, dt);
 
     // missiles: infrared when the target is in the seeker cone
-    if (w.group === 0 && w.lock.locked && dist > 500 && dist < 4200 && angLos < 35 * DEG && this.missileCool <= 0 && w.remaining('ir') > 0 && this.combat.threats(en).length < 2) {
+    if (w.group === 0 && w.lock.locked && dist > 1100 && dist < 4200 && angLos < 35 * DEG && this.missileCool <= 0 && w.remaining('ir') > 0 && this.combat.threats(en).length < 2) {
       if (this.combat.fireMissile(f)) this.missileCool = sk.missileCool;
     } else if (w.group === 1 && w.lock.locked && dist > 900 && this.missileCool <= 0 && angLos < 45 * DEG && this.combat.threats(en).length < 2) {
       if (this.combat.fireMissile(f)) this.missileCool = sk.missileCool;
@@ -451,6 +451,6 @@ export class PilotBrain implements Brain {
 
     // speed: turning fights live near corner speed, a tail chase wants a bit more than the target
     const corner = maxV * 0.46;
-    return angLos > 40 * DEG ? corner : clamp(en.vel.length() + 40 + (dist - 500) * 0.05, corner, maxV * 0.9);
+    return angLos > 40 * DEG ? corner : clamp(en.vel.length() + 40 + (dist - 500) * 0.05, corner, Math.min(maxV * 0.62, 360));
   }
 }

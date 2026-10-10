@@ -59,10 +59,11 @@ export class Skirmish {
     const ac = new Aircraft(def, DIFFICULTIES.standard, team === 'blue' ? palette.blueHex : palette.redHex);
     this.scene.add(ac.object);
     const f = new Fighter(`${def.name} ${team === 'blue' ? 'B' : 'R'}${index + 1}`, team, ac, false);
-    // AI flies a missile-heavy loadout so it can fight at range
-    f.loadout.items = presetLoadout(f.loadout.arm, 'Beyond-visual-range');
+    // AI flies the dogfighter load (mostly heat-seekers): fights end up close, where the cannon matters
+    f.loadout.items = presetLoadout(f.loadout.arm, 'Dogfighter');
     f.weapons.rearm();
     f.mountVisuals();
+    f.aimAssist = { rookie: 0.35, regular: 0.6, ace: 0.9 }[this.skill];
     const homes = this.map.airstrips.filter((a) => a.team === team);
     const brain = new PilotBrain(this.combat, SKILLS[this.skill], homes, { x: 0, z: 0 }, this.cruise + (index % 3) * 220, this.map.boundary);
     f.brain = brain;

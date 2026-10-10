@@ -243,7 +243,7 @@ export class FlightModel {
     let pTarget = c.pitch >= 0 ? c.pitch * pitchPos : c.pitch * pitchNeg;
 
     // angle-of-attack limiter: fades out pitch commands that would drive AoA past stall
-    const aLim = (c.pitch >= 0 ? aStall : aStall * 0.7) * (1 + 0.18 * tv);
+    const aLim = (c.pitch >= 0 ? aStall : aStall * 0.95) * (1 + 0.18 * tv);
     if (c.pitch * this.aoa > 0) {
       pTarget *= 1 - diff.aoaLimiter * smoothstep(0.7 * aLim, aLim, Math.abs(this.aoa));
     }

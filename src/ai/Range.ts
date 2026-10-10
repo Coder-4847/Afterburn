@@ -28,16 +28,16 @@ interface DroneSlot {
  * further on, drones orbiting off to either side. [forward, right, altitude offset]
  */
 const DUMMIES: [number, number, number][] = [
-  [1700, -120, -30],
-  [1770, 20, 50],
-  [1700, 160, -60],
-  [1850, 300, 110],
+  [1400, -100, -30],
+  [1460, 20, 50],
+  [1400, 130, -60],
+  [1520, 250, 110],
 ];
 
 const DRONES: { id: string; fwd: number; right: number; radius: number; dAlt: number; speed: number; dir: 1 | -1 }[] = [
-  { id: 'su27', fwd: 2300, right: -2800, radius: 2300, dAlt: 350, speed: 185, dir: 1 },
-  { id: 'mig29', fwd: 2600, right: 2600, radius: 1900, dAlt: 150, speed: 195, dir: -1 },
-  { id: 'j10c', fwd: 3900, right: -4500, radius: 2500, dAlt: 850, speed: 200, dir: 1 },
+  { id: 'su27', fwd: 1900, right: -1900, radius: 1500, dAlt: 350, speed: 185, dir: 1 },
+  { id: 'mig29', fwd: 2100, right: 1900, radius: 1300, dAlt: 150, speed: 195, dir: -1 },
+  { id: 'j10c', fwd: 3000, right: -3000, radius: 1700, dAlt: 850, speed: 200, dir: 1 },
 ];
 
 const CLUSTER: { kind: GroundKind; name: string; dx: number; dz: number; h: number }[] = [
@@ -111,7 +111,7 @@ export class TrainingRange {
     }
 
     // ground cluster on flat land a few km ahead
-    const [gx, gz] = at(3000, 300);
+    const [gx, gz] = at(2400, 300);
     const site = this.findLand(gx, gz) ?? this.findLand(gx, gz, 30);
     if (site) {
       for (const g of CLUSTER) {

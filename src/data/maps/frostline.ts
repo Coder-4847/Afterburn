@@ -14,7 +14,7 @@ export const FROSTLINE: MapDef = {
   seaLevel: 0,
   terrain: {
     kind: 'alpine',
-    peak: 2700,
+    peak: 1700,
     basins: [
       { x: -6700, z: 300, rx: 2700, rz: 1500, rot: 5, floor: 55 },
       { x: -4200, z: -5200, rx: 1900, rz: 1250, rot: 30, floor: 70 },

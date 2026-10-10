@@ -27,12 +27,12 @@ Mouse-aim is the default scheme: the mouse moves a reticle, and the aircraft ban
 | Input | Action |
 |---|---|
 | **Mouse** | Move the aim reticle (the jet follows it) |
-| **Shift / Ctrl** or **mouse wheel** | Throttle up / down |
+| **W / S** or **mouse wheel** | Throttle up / down |
 | **Space** (hold) | Afterburner |
 | **B** (hold) | Airbrake / wheel brakes |
 | **G** | Landing gear |
-| **W / S, A / D** | Manual pitch and roll (overrides the reticle while held) |
-| **Q / E** | Rudder |
+| **A / D** | Rudder left / right (the reticle follows the nose, so there is no corrective roll) |
+| **Q / E** | Manual roll (overrides the reticle while held) |
 | **Left mouse** (hold) | Cannon |
 | **Right mouse** | Fire the selected weapon (missile / bomb on click, rockets while held) |
 | **1 2 3 4** | Select weapon group: IR missiles, radar missiles, rocket pods, bombs |
@@ -47,7 +47,7 @@ Mouse-aim is the default scheme: the mouse moves a reticle, and the aircraft ban
 | **F3** | FPS / render stats |
 | **Esc** | Pause, settings, respawn options |
 
-An alternate scheme (Settings > Controls) moves throttle to W / S. Sensitivity, invert-Y, FOV, graphics quality,
+The other scheme (Settings > Controls) puts throttle back on Shift / Ctrl and W / S becomes manual pitch. Sensitivity, invert-Y, FOV, graphics quality,
 difficulty and HUD options are all in the pause menu. Settings persist in `localStorage`.
 
 Every key above can be rebound: **Controls and key bindings** on the setup screen or the pause menu. Click a key, then press the new key or

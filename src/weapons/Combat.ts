@@ -316,12 +316,35 @@ export class Combat implements FighterHooks {
     const fl = f.aircraft.flight;
     fl.forward(_v1);
     this.muzzle(f, _v2);
+    // aim assist: a target close to the gun line pulls the bullets onto its lead point
+    const tgt = w.target;
+    let assistDir: Vector3 | null = null;
+    if (f.aimAssist > 0 && tgt && tgt.alive && tgt.kind === 'air') {
+      _v4.copy(tgt.pos).sub(_v2);
+      _v5.copy(tgt.vel).sub(fl.vel);
+      const mv = gp.muzzleVelocity;
+      const A = _v5.dot(_v5) - mv * mv;
+      const B = 2 * _v4.dot(_v5);
+      const Cc = _v4.dot(_v4);
+      const disc = B * B - 4 * A * Cc;
+      if (disc >= 0 && A < 0) {
+        const t = (-B - Math.sqrt(disc)) / (2 * A);
+        if (t > 0 && t < 3) {
+          _v4.addScaledVector(_v5, t);
+          _v4.y += 0.5 * GRAVITY * t * t;
+          _v4.normalize();
+          // only help when we are already pointing roughly at it
+          if (_v4.dot(_v1) > Math.cos(6 * DEG)) assistDir = _v4;
+        }
+      }
+    }
     for (let i = 0; i < n; i++) {
       const idx = this.bHead;
       this.bHead = (this.bHead + 1) % MAX_BULLETS;
       if (idx + 1 > this.bHigh) this.bHigh = idx + 1;
       const sp = gp.spread;
       _v3.copy(_v1);
+      if (assistDir) _v3.lerp(assistDir, f.aimAssist);
       _v3.x += (Math.random() * 2 - 1) * sp;
       _v3.y += (Math.random() * 2 - 1) * sp;
       _v3.z += (Math.random() * 2 - 1) * sp;

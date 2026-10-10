@@ -11,10 +11,10 @@ export type Action =
 export const DEFAULT_BINDINGS: Record<Action, string[]> = {
   pitchUp: ['KeyW'],
   pitchDown: ['KeyS'],
-  rollLeft: ['KeyA'],
-  rollRight: ['KeyD'],
-  yawLeft: ['KeyQ'],
-  yawRight: ['KeyE'],
+  rollLeft: ['KeyQ'],
+  rollRight: ['KeyE'],
+  yawLeft: ['KeyA'],
+  yawRight: ['KeyD'],
   throttleUp: ['ShiftLeft', 'ShiftRight'],
   throttleDown: ['ControlLeft', 'ControlRight'],
   afterburner: ['Space'],
@@ -40,8 +40,8 @@ export const DEFAULT_BINDINGS: Record<Action, string[]> = {
 };
 
 export const ACTION_LABELS: Record<Action, string> = {
-  pitchUp: 'Pitch up (manual)', pitchDown: 'Pitch down (manual)',
-  rollLeft: 'Roll left', rollRight: 'Roll right', yawLeft: 'Rudder left', yawRight: 'Rudder right',
+  pitchUp: 'Throttle up (W)', pitchDown: 'Throttle down (S)',
+  rollLeft: 'Roll left (manual)', rollRight: 'Roll right (manual)', yawLeft: 'Rudder left', yawRight: 'Rudder right',
   throttleUp: 'Throttle up', throttleDown: 'Throttle down', afterburner: 'Afterburner (hold)', airbrake: 'Airbrake / wheel brakes',
   fireGun: 'Fire gun', fireMissile: 'Fire missile', cycleTarget: 'Cycle target', lockTarget: 'Lock at reticle',
   flares: 'Flares', chaff: 'Chaff',
