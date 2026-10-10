@@ -99,12 +99,35 @@ export interface IntakeSpec {
   drop?: number;
   /** A thin boundary-layer splitter plate beside the mouth (default true). */
   splitter?: boolean;
+  /** Lip rake: the mouth plane leans (z shift per metre of height; + = top further aft). */
+  rake?: number;
+  /** A wedge ramp visible inside the mouth (F-15, F-22, MiG-29, Su-27). */
+  ramp?: boolean;
+  /** Vertical lean of the duct sides (outward toward the bottom, m over the mouth height). */
+  cant?: number;
 }
 
-/** Section of the fuselage: [z fraction 0(nose)..1(tail), half width, half height above yc, y centre, half height below yc (default: same), top exponent (default shapeN), bottom exponent (default: top)]. */
-export type Section = [number, number, number, number, number?, number?, number?];
+/**
+ * Section of the fuselage: [z fraction 0(nose)..1(tail), half width, half height above yc, y centre, half height below yc (default: same),
+ * top exponent (default shapeN), bottom exponent (default: top), height of the widest point above yc (default 0: a shoulder or chine line)].
+ */
+export type Section = [number, number, number, number, number?, number?, number?, number?];
 
 /** An extra lofted body: engine nacelle, tail boom, intake bump, conformal fairing. */
+/** A small fitted part: blister, box, cylinder, antenna blade, vent grille, cone. Positions are metres (z from the nose). */
+export interface DetailSpec {
+  k: 'blister' | 'box' | 'cyl' | 'blade' | 'vent' | 'cone';
+  /** x (right), y (up), z (metres from the nose). */
+  p: [number, number, number];
+  /** blister: radii x,y,z. box: width, height, length. cyl/cone: radius, length (along z), radius at the far end for a cone. blade: height, chord, thickness. vent: width, length, slats. */
+  s: [number, number, number];
+  /** Rotation about x, y, z (rad). */
+  r?: [number, number, number];
+  /** Also place the mirror image. */
+  mirror?: boolean;
+  mat?: 'body' | 'dark' | 'strut' | 'glass' | 'accent' | 'intake';
+}
+
 export interface PodSpec {
   /** Centre line offset (m). */
   x: number;
@@ -155,12 +178,16 @@ export interface ModelSpec {
   fins: FinSpec[];
   intakes: IntakeSpec[];
   pods?: PodSpec[];
+  /** Small fitted parts: antennas, blisters, vents, fairings, hatches. */
+  details?: DetailSpec[];
   engines: 1 | 2;
   /** Engine centre-line offset when twin (m). */
   engineSpacing?: number;
   nozzleRadius: number;
   /** Nozzle width over height (default 1). */
   nozzleAspect?: number;
+  /** Nozzle style: round petals (default) or a rectangular two-dimensional nozzle. */
+  nozzleStyle?: 'round' | 'flat';
   /** Nozzle exit position (fraction of the length). Default just behind the end of the fuselage. */
   nozzleZ?: number;
   /** Nozzle height above the centre line (default: the last fuselage station's). */
@@ -177,6 +204,8 @@ export interface ModelSpec {
   tandem?: boolean;
   /** Dorsal airbrake panel. */
   airbrake?: boolean;
+  /** Airbrake placement: start z (m from the nose), length and half width (m). */
+  airbrakeAt?: [number, number, number];
   features?: ModelFeatures;
   /** Landing gear placement: main wheel offset (m), main leg z and nose leg z (fractions). */
   gear?: { mainX?: number; mainZ?: number; noseZ?: number; mainR?: number; noseR?: number };

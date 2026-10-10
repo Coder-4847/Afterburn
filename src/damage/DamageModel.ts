@@ -1,6 +1,6 @@
 import { Vector3 } from 'three';
 import type { AircraftDef } from '../aircraft/AircraftDef';
-import { secAt } from '../aircraft/ProceduralJet';
+import { secAt } from '../aircraft/sections';
 import type { FlightMods } from '../flight/FlightModel';
 import { clamp } from '../core/math';
 

@@ -5,7 +5,7 @@ code. It records what the game is, how the code is organised, every system's cur
 work, how to test things in this environment, what has been done, and what is still open. If you change something significant,
 update the relevant section (and the "Change log" at the bottom) before you finish.
 
-Last updated: 2026-10-10, after commit `f71fc67` (pushed). A **model rebuild + AI boundary fix is done in the working tree but NOT yet committed** (see change log 9).
+Last updated: 2026-10-10, after commit `da349a9` (pushed). A second, much deeper **model pass (detail geometry, markings, shading) is in the working tree and NOT yet committed** (change log 10).
 
 ---
 
@@ -240,6 +240,7 @@ water). Verified: zero lamps over water on all Coral strips.
   geometry cached per store type and shared.
 - Ships (`ShipModel.buildShip`): `Builder` merges per material and must convert to non-indexed (ExtrudeGeometry hulls are
   non-indexed; mixing indexed and non-indexed made `mergeGeometries` fail and silently dropped hulls once).
+- **Model pass 2 (detail geometry)**: sections gain a shoulder height `ys` (chined / diamond / flat-bottom hulls via exponents 1.3-1.8 for faceted forebodies, 3-4.5 for slab sides) and the fuselage/pods use creased normals (`toCreasedNormals`, 0.62 rad) so chines stay crisp; `details` (blister / box / cyl / cone / blade / vent) place antennas, vents, receptacles, sensor windows; `data/aircraft/kit.ts` has the shared sets (noseKit, blades, dispensers, bayVents, receptacle, windows). Builder extras: wing/fin hinge and panel seams, rudder gap, tailplane pivot bosses, RWR bulbs, intake lips with thickness / wedge ramp / bleed slot / compressor face, transparent canopy with sill, windscreen arch, bows, HUD glass, cockpit tub, seats, pilots, 2D (flat) and round petal nozzles, pylon stubs on every external station, tip rails with end fairing, flat national markings (`decal`: US star-and-bars, French / RAF roundels, Russian star, Chinese star-and-ring) on wings (both faces), fins and single-nacelle fuselage sides, bigger team-colour wing tips and fin tops. `sections.ts` holds the section maths (`secAt`), so `stations.ts` and `DamageModel` import it without a cycle. Skin material uses vertex colours (`shade()` darkens down-facing faces) and a brick-pattern panel texture with hatches, rivets, stencils and flow streaks (metal 0.22, rough 0.5). Cost: 17-24k triangles per jet, about 1400 draw calls in a 10v10 scene (was 1070).
 - Optional `.glb` override per aircraft (`ModelLoader.ts`, `public/models/<id>.glb`).
 
 ### 5.10 Rendering, audio, UI
@@ -309,10 +310,12 @@ importing and appending it in `index.ts`.
    fixes (ship hull merge, escort placement, assist bookkeeping for ship kills).
 7. **Own carrier map** (`f27cd53`): Cobalt Sea, no map choice, parked jets moved off the spawn lane.
 8. **Aerofoil models + easy catapult** (`f71fc67`): real aerofoil wings/tails, better canopies and details, one-key carrier launch.
-9. **Real-proportion remodel + AI arena fix** (uncommitted): all 14 jets re-authored from real dimensions with the extended builder
+9. **Real-proportion remodel + AI arena fix** (`da349a9`): all 14 jets re-authored from real dimensions with the extended builder
    (see 5.9); matte paint with quieter panel lines; smaller team-colour tip bands; AI no longer drifts out of bounds (5.5); AI that
    stays outside 15 s is lost like the player; ceiling/descent clamp bug fixed. Dev note: in the Browser pane the screenshot is a
    device-pixel crop (top-left), so use `camera.setViewOffset(W, H, W/6, H/6, W, H)` on `g.hangar.camera` and wait ~1 s before a screenshot.
+
+10. **Detail-geometry pass** (uncommitted): see 5.9 "Model pass 2". Triggered by feedback that the jets still read as tubes and pancakes.
 
 ---
 

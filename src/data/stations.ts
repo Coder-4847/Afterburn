@@ -1,5 +1,5 @@
 import type { AircraftDef } from '../aircraft/AircraftDef';
-import { secAt } from '../aircraft/ProceduralJet';
+import { secAt } from '../aircraft/sections';
 import { STORES, type WeaponKind } from './weapons';
 
 /** One weapon station (hardpoint). Positions are in the aircraft's model space (-Z forward). */

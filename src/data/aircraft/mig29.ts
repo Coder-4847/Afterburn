@@ -1,10 +1,12 @@
 import type { AircraftDef } from '../../aircraft/AircraftDef';
+import { noseKit, blades, dispensers, bayVents, receptacle, windows } from './kit';
 
 // <prelude>
 /** Fuselage length (m) and a metres -> length-fraction helper, so the numbers below are real distances from the nose. */
 const L = 17.37;
 const m = (x: number): number => x / L;
 // </prelude>
+
 
 /** Compact, quick-turning point defender: very good in the first turn, but short-legged and light on punch. */
 export const MIG29: AircraftDef = {
@@ -25,11 +27,14 @@ export const MIG29: AircraftDef = {
   countermeasures: { flares: 60, chaff: 30 },
   model: {
     length: L, shapeN: 2.7,
-    // [z, half width, half height above, y centre, half height below, top exponent, bottom exponent]
+    // [z, half width, half height above, y centre, half height below, top exponent, bottom exponent, widest point above centre]
     sections: [
-      [0, 0, 0, -0.05, 0, 2.3], [m(0.7), 0.28, 0.28, -0.05, 0.28, 2.3], [m(2.2), 0.62, 0.52, -0.03, 0.5], [m(4.2), 0.95, 0.66, -0.02, 0.6],
-      [m(6.2), 1.25, 0.76, 0, 0.62], [m(8.5), 1.5, 0.82, 0, 0.6], [m(11.0), 1.4, 0.8, 0, 0.58], [m(14.0), 1.2, 0.68, 0, 0.52],
-      [m(16.0), 1.05, 0.6, 0, 0.5], [1, 0.95, 0.54, 0, 0.48],
+      [0, 0, 0, -0.05, 0, 2.3], [m(0.7), 0.28, 0.28, -0.05, 0.28, 2.3], [m(2.2), 0.62, 0.52, -0.03, 0.5, 2.5, 2.8], [m(4.2), 0.95, 0.66, -0.02, 0.6, 2.7, 3.2],
+      [m(6.2), 1.25, 0.76, 0, 0.62, 3.0, 3.6], [m(8.5), 1.5, 0.82, 0, 0.6, 3.4, 4.0], [m(11.0), 1.4, 0.8, 0, 0.58, 3.4, 4.0],
+      [m(14.0), 1.2, 0.68, 0, 0.52, 3.0, 3.4], [m(16.0), 1.05, 0.6, 0, 0.5, 2.8], [1, 0.95, 0.54, 0, 0.48, 2.6],
+    ],
+    pods: [
+      { x: 0.82, mirror: true, n: 2.8, capBack: true, rings: [[m(10.0), 0.4, 0.4, 0, 0.4], [m(12.5), 0.66, 0.66, 0, 0.58], [m(15.5), 0.66, 0.66, 0, 0.58], [m(17.1), 0.62, 0.62, 0, 0.56]] },
     ],
     wing: {
       zRoot: m(6.9), rootChord: 5.4, tipChord: 1.3, span: 11.36, sweep: 4.0, thickness: 0.28, y: -0.15, dihedral: 0, xRoot: 1.3,
@@ -37,10 +42,20 @@ export const MIG29: AircraftDef = {
     },
     hstab: { zRoot: m(13.2), rootChord: 3.1, tipChord: 1.1, span: 7.8, sweep: 2.3, y: -0.3, dihedral: -0.1, xRoot: 1.15 },
     fins: [{ x: 1.5, zRoot: m(11.6), rootChord: 4.2, tipChord: 1.5, height: 2.6, sweep: 2.4, cant: 0.1, y: 0.6 }],
-    intakes: [{ x: 1.0, y: -0.45, zFrac: m(5.0), w: 1.15, h: 1.0, len: 3.9, n: 4.2, toe: 0.15 }],
-    engines: 2, engineSpacing: 0.8, nozzleRadius: 0.6, airbrake: true,
+    intakes: [{ x: 1.0, y: -0.45, zFrac: m(5.0), w: 1.15, h: 1.0, len: 3.9, n: 4.2, toe: 0.15, ramp: true }],
+    engines: 2, engineSpacing: 0.8, nozzleRadius: 0.6, airbrake: true, airbrakeAt: [8.2, 1.8, 0.6],
     canopyZ: m(3.0), canopyLen: 2.9, canopyW: 0.52, canopyH: 0.55,
     features: { irst: true, radome: 0.07, spine: [m(6.0), m(12.5), 0.6, 0.28], hook: 0.9, sting: true },
+    details: [
+      ...noseKit(1.9, 0.44),
+      ...blades(6.4, 0.78, 7.0, -0.66),
+      ...dispensers(14.6, -0.5, 0.7),
+      // the louvred auxiliary intakes on top of the LERX and the fence either side of the cockpit
+      { k: 'vent', p: [1.0, 0.7, 5.3], s: [0.55, 1.5, 9], mirror: true, mat: 'dark' },
+      { k: 'box', p: [0.5, 0.62, 5.6], s: [0.5, 0.03, 0.9], mirror: true, mat: 'dark' },
+      ...bayVents(12.0, 1.38, 0.1),
+      { k: 'blister', p: [0, 0.86, 10.6], s: [0.16, 0.12, 1.2] },
+    ],
     gear: { mainX: 1.4, mainZ: 0.55, noseZ: 0.17, mainR: 0.36, noseR: 0.22 },
     colors: { body: 0x8c96a2, accent: 0xff4a4a, dark: 0x30363d, camo: 0x62707f },
   },
