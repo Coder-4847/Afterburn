@@ -265,3 +265,10 @@ body.hi-contrast .ro-lbl, body.hi-contrast .ro-unit, body.hi-contrast .ro-sub, b
 .dmg-row.warn { border-left-color: #ffcf4d; color: #ffe9a8; }
 .dmg-row.bad { border-left-color: #ff8a3c; color: #ffc59a; }
 .dmg-row.out { border-left-color: #ff3b3b; color: #ff9a9a; }
+
+/* ---------------- repair countdown ---------------- */
+.hud-service { position: absolute; left: 50%; top: 38vh; transform: translateX(-50%); display: none; flex-direction: column; align-items: center; gap: 4px; padding: 14px 30px 12px; background: rgba(6, 10, 14, 0.66); border: 1px solid rgba(95, 224, 255, 0.55); border-radius: 3px; pointer-events: none; }
+.hud-service span { font-size: 12px; letter-spacing: 0.3em; color: var(--accent); }
+.hud-service b { font-family: var(--mono); font-size: 54px; line-height: 1; font-weight: 600; }
+.hud-service i { font-style: normal; font-size: 11px; letter-spacing: 0.08em; color: rgba(232, 242, 247, 0.7); }
+.hud-service::after { content: ''; display: block; height: 3px; width: 100%; margin-top: 6px; background: linear-gradient(90deg, var(--accent) calc(var(--p, 0) * 100%), rgba(255,255,255,0.15) calc(var(--p, 0) * 100%)); }

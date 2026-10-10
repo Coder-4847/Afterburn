@@ -34,10 +34,15 @@ export class Match {
   }
 
   /** Last Stand: how many pilots each team still has in the fight (flying, or with a life to spawn with). */
-  setRemaining(blue: number, red: number): void {
+  /** Total lives left on each side: the tie-break when the clock runs out. */
+  livesLeft = { blue: 0, red: 0 };
+
+  setRemaining(blue: number, red: number, blueLives = 0, redLives = 0): void {
     if (this.over || !this.cfg.lives) return;
     this.score.blue = blue;
     this.score.red = red;
+    this.livesLeft.blue = blueLives;
+    this.livesLeft.red = redLives;
     if (blue === 0 && red === 0) this.finish('draw', 'Both teams were wiped out');
     else if (blue === 0) this.finish('red', 'Blue team eliminated');
     else if (red === 0) this.finish('blue', 'Red team eliminated');
@@ -46,6 +51,15 @@ export class Match {
   update(dt: number): void {
     if (this.over) return;
     this.time += dt;
+    if (this.cfg.timeLimit > 0 && this.time >= this.cfg.timeLimit && this.cfg.lives) {
+      // Last Stand on the clock: more pilots left wins, then more lives left
+      const { blue, red } = this.score;
+      const lb = this.livesLeft.blue;
+      const lr = this.livesLeft.red;
+      const w: Winner = blue !== red ? (blue > red ? 'blue' : 'red') : lb !== lr ? (lb > lr ? 'blue' : 'red') : 'draw';
+      this.finish(w, `Time limit reached: Blue ${blue} pilots (${lb} lives), Red ${red} pilots (${lr} lives)`);
+      return;
+    }
     if (this.cfg.timeLimit > 0 && this.time >= this.cfg.timeLimit) {
       const { blue, red } = this.score;
       this.finish(blue === red ? 'draw' : blue > red ? 'blue' : 'red', 'Time limit reached');

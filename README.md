@@ -66,7 +66,9 @@ Past them, but not wildly, it is a **crash landing**: the aircraft survives with
 engines and wings in proportion to how hard it was). A gear-up belly landing on a runway, or a wheels-down landing on open ground, is
 also survivable; water, or a truly violent impact, destroys the aircraft. A broken gear can't be lowered again.
 
-Stop on a Blue runway or apron and stay stopped: **10 seconds** to refuel and rearm, **20 seconds** if there is damage to repair.
+You can land anywhere, but you can only be serviced **stopped on a Blue runway** (the apron and open ground do not count). A big
+countdown appears: **10 seconds** to refuel and rearm, **20 seconds** if there is damage to repair. Nothing can hurt you while the
+crew is working. Move off the runway and the countdown resets.
 
 Arcade mode also has terrain avoidance: **PULL UP** warns, then an auto pull-up takes over when impact is imminent.
 
@@ -132,9 +134,10 @@ Terrain is generated per map from a seed (`src/world/generators`: `archipelago`,
   seconds after dying.
 - **Last Stand**: 1v1 up to 10v10, **three lives each** (three spawns). Every aircraft destroyed with its pilot aboard costs a life. The
   first team with no pilots left loses. When you are out of lives you spectate (Tab switches the view) until the match is decided.
-  **Eject** (hold **J**, about one second) when the aircraft is doomed: the pilot gets out with a chance that depends on height,
-  speed and attitude (very low or inverted is bad, about 90% in calm flight at height). A pilot who gets out keeps the life; one who
-  does not loses it like any other kill. Ejecting from a falling wreck can also win the life back.
+  **Eject** (hold **J**, about one second) when the aircraft is doomed. In the air it is a coin toss: 50% the pilot is recovered and
+  keeps the life, 50% the pilot is lost and it costs a life like any other kill. If you have landed and are stopped (or nearly), ejecting
+  always works and the life is kept. Ejecting from a falling wreck can also win a spent life back. AI pilots never eject.
+  There is an optional time limit: when it runs out, the team with more pilots left wins, then the team with more lives left.
 - **Training Range**: target balloons dead ahead, a ground-target site and three Red drones that evade (or, set to *Hostile*, hunt you).
 - **Free Flight**: an empty sky for practising takeoffs, landings and aerobatics.
 

@@ -76,6 +76,8 @@ export class PilotBrain implements Brain {
   private patrolAngle = Math.random() * Math.PI * 2;
   private defendT = 0;
   private breakSide: 1 | -1 = Math.random() < 0.5 ? 1 : -1;
+  private notchT = 0;
+  private notchSide: 1 | -1 = 1;
   /** Horizontal direction toward the missile we are evading (kept per pilot: scratch vectors are shared). */
   private evadeLos = new Vector3(0, 0, -1);
 
@@ -111,6 +113,7 @@ export class PilotBrain implements Brain {
     this.crank -= dt;
     this.noiseT -= dt;
     this.defendT -= dt;
+    this.notchT -= dt;
     if (this.noiseT <= 0) {
       this.noiseT = 0.3;
       this.noise.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(sk.aimErr * 2);
@@ -126,8 +129,9 @@ export class PilotBrain implements Brain {
       this.evadeT = 3;
       if (this.cmCool <= 0 && th.eta < 4.5 + sk.cm * 1.5) {
         if (Math.random() < sk.cm) {
-          if (th.missile.kind === 'ir') this.combat.dispense(f, 'flare', 1);
-          else this.combat.dispense(f, 'chaff', 1);
+          // late in the fight, throw a pair: one flare is easy to ignore
+          if (th.missile.kind === 'ir') this.combat.dispense(f, 'flare', th.eta < 2.5 ? 2 : 1);
+          else this.combat.dispense(f, 'chaff', th.eta < 2.5 ? 2 : 1);
         }
         this.cmCool = th.missile.kind === 'ir' ? 1.0 : 1.8;
       }
@@ -139,6 +143,13 @@ export class PilotBrain implements Brain {
       _d.y = Math.sin(f.clock * 1.9) * 0.45 - (th.eta < 3 ? 0.25 : 0);
     }
     this.evadeT -= dt;
+
+    // ---- radar lock but no missile yet: turn to put the shooter on the beam (a notch the seeker cannot see) ----
+    const hardLock = threats.length === 0 && sk.cm >= 0.6 ? this.combat.radarLocks(f).find((l) => l.locked && l.by.pos.distanceTo(f.pos) > 2500) : undefined;
+    if (hardLock && this.notchT <= -2) {
+      this.notchT = 3;
+      this.notchSide = Math.random() < 0.5 ? -1 : 1;
+    }
 
     // ---- pick a target (spread out: avoid everyone piling on one jet) ----
     const en = this.pickEnemy(f);
@@ -152,6 +163,14 @@ export class PilotBrain implements Brain {
       if (!evading) _d.crossVectors(this.evadeLos, UP).multiplyScalar(this.evadeSide);
       speed = Math.min(fl.def.flight.maxSpeed * 0.8, 400);
       ab = true;
+    } else if (hardLock && this.notchT > 0) {
+      this.mode = 'evade';
+      _r.copy(hardLock.by.pos).sub(f.pos);
+      _r.y = 0;
+      _r.normalize();
+      _d.crossVectors(_r, UP).multiplyScalar(this.notchSide);
+      _d.y = clamp((this.patrolAlt - f.pos.y) / 800, -0.1, 0.1);
+      speed = Math.min(fl.def.flight.maxSpeed * 0.55, 300);
     } else if (needsRtb && this.rtbBlock <= 0) {
       this.mode = 'rtb';
       speed = this.goHome(f, _d);
@@ -161,6 +180,29 @@ export class PilotBrain implements Brain {
     } else {
       this.mode = 'patrol';
       speed = this.patrol(f, dt, _d);
+    }
+
+    // ---- keep clear of friendly aircraft (two jets chasing the same target otherwise collide) ----
+    let sx = 0;
+    let sy = 0;
+    let sz = 0;
+    let near = false;
+    for (const o of this.combat.fighters) {
+      if (o === f || o.team !== f.team || !o.alive) continue;
+      _p.copy(f.pos).sub(o.pos);
+      const d = _p.length();
+      if (d > 320 || d < 1) continue;
+      const k = (1 - d / 320) * (1 - d / 320) / d;
+      sx += _p.x * k;
+      sy += _p.y * k;
+      sz += _p.z * k;
+      near = true;
+    }
+    if (near) {
+      _d.normalize();
+      _d.x += sx * 340;
+      _d.y += sy * 340;
+      _d.z += sz * 340;
     }
 
     // ---- ceiling: thin air makes a jet a poor fighter, and the sky is not the arena ----
@@ -225,8 +267,13 @@ export class PilotBrain implements Brain {
       const ang = Math.acos(clamp(_f.dot(_r) / (d || 1), -1, 1));
       let score = d * (1 + ang / Math.PI);
       // others already on this target make it less attractive
-      for (const m of this.combat.fighters) if (m !== f && m.team === f.team && m.weapons.target === o) score += 1800;
+      for (const m of this.combat.fighters) {
+        if (m === f || m.team !== f.team || m.weapons.target !== o) continue;
+        score += m.isPlayer ? -350 : 1800; // join the player's target; do not pile onto another AI's
+      }
       if (o.weapons.target === f) score -= 1500; // someone shooting at us comes first
+      else if (o.weapons.target && o.weapons.target.team === f.team && o.weapons.target.kind === 'air') score -= 800; // peel one off a teammate
+      score -= (1 - o.damage.health()) * 1200; // a hurt jet is a kill waiting to happen
       if (score < bs) {
         bs = score;
         best = o;
@@ -451,6 +498,11 @@ export class PilotBrain implements Brain {
 
     // speed: turning fights live near corner speed, a tail chase wants a bit more than the target
     const corner = maxV * 0.46;
+    // too slow to turn: unload (lower the nose) and let the speed come back instead of pulling into a stall
+    if (fl.speed < corner * 0.8 && angLos > 25 * DEG) {
+      out.y = Math.min(out.y, -0.12);
+      out.normalize();
+    }
     return angLos > 40 * DEG ? corner : clamp(en.vel.length() + 40 + (dist - 500) * 0.05, corner, Math.min(maxV * 0.62, 360));
   }
 }

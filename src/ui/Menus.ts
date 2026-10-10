@@ -149,10 +149,11 @@ export class Menus {
     if (s.sortie === 'tdm' || s.sortie === 'elimination') {
       el('div', 'section', p, 'Match');
       this.select(p, 'Team size', 'teamSize', [1, 2, 3, 5, 10].map((n) => [String(n), `${n} v ${n}`]), undefined, 'You count as one of your side; the rest are AI wingmen');
-      if (s.sortie === 'tdm') {
-        this.select(p, 'Score limit', 'scoreLimit', [10, 20, 30, 50].map((n) => [String(n), `${n} kills`]));
-        this.select(p, 'Time limit', 'timeLimit', [[0, 'None'], [5, '5 minutes'], [10, '10 minutes'], [15, '15 minutes']].map(([n, t]) => [String(n), String(t)]));
-      }
+      if (s.sortie === 'tdm') this.select(p, 'Score limit', 'scoreLimit', [10, 20, 30, 50].map((n) => [String(n), `${n} kills`]));
+      this.select(
+        p, 'Time limit', 'timeLimit', [[0, 'None'], [5, '5 minutes'], [10, '10 minutes'], [15, '15 minutes']].map(([n, t]) => [String(n), String(t)]), undefined,
+        s.sortie === 'elimination' ? 'When it runs out: more pilots left wins, then more lives' : undefined,
+      );
       this.select(p, 'AI skill', 'aiSkill', Object.entries(SKILLS).map(([id, k]) => [id, k.label]), undefined, 'Reaction time, aim, countermeasure use');
     } else if (s.sortie === 'training') {
       el('div', 'section', p, 'Range');

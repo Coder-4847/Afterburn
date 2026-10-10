@@ -178,6 +178,9 @@ export class Game {
     this.matchEl.className = 'hud-match';
     this.matchEl.style.display = 'none';
     this.hud.root.appendChild(this.matchEl);
+    this.serviceEl = document.createElement('div');
+    this.serviceEl.className = 'hud-service';
+    this.hud.root.appendChild(this.serviceEl);
     this.briefEl = document.createElement('div');
     this.briefEl.className = 'hud-brief';
     this.hud.root.appendChild(this.briefEl);
@@ -281,7 +284,7 @@ export class Game {
       this.skirmish = new Skirmish(this.combat, this.world.scene, this.smoke, this.world.map, s.aiSkill);
       this.skirmish.build(s.teamSize - 1, s.teamSize);
       const lives = s.sortie === 'elimination' ? LIVES : 0;
-      this.match = new Match({ scoreLimit: s.scoreLimit, timeLimit: s.sortie === 'tdm' ? s.timeLimit * 60 : 0, teamSize: s.teamSize, lives });
+      this.match = new Match({ scoreLimit: s.scoreLimit, timeLimit: s.timeLimit * 60, teamSize: s.teamSize, lives });
       if (lives) for (const f of this.combat.fighters) f.lives = lives;
     }
     this.spectating = false;
@@ -467,6 +470,9 @@ export class Game {
   }
 
   private brakeHinted = false;
+  private serviceInfo: { label: string; left: number; total: number } | null = null;
+  private serviceHint = 0;
+  private serviceEl!: HTMLElement;
   private autoCmTimer = 0;
   private autoTargetTimer = 0;
 
@@ -672,20 +678,13 @@ export class Game {
     this.ejectNow();
   }
 
-  /** Chance the pilot gets out in one piece: height, speed, attitude and the state of the aircraft all matter. */
+  /**
+   * Ejecting on the ground (landed and rolling slowly or stopped) always works. In the air it is a coin toss: half the time the
+   * pilot is recovered and keeps the life, half the time not and a life is lost.
+   */
   private ejectChance(): number {
     const f = this.player.flight;
-    f.upVec(_h1);
-    let p = 0.92;
-    if (f.grounded && f.speed < 30) p = 0.99;
-    else if (f.agl < 40) p = 0.1;
-    else if (f.agl < 120) p = 0.4;
-    else if (f.agl < 250) p = 0.72;
-    if (f.speed > 330) p -= 0.22;
-    else if (f.speed > 260) p -= 0.08;
-    if (_h1.y < -0.3) p -= f.agl < 400 ? 0.3 : 0.1; // upside down and low: the seat fires into the ground
-    if (this.fighter.state === 'wreck') p -= 0.12; // tumbling
-    return clamp(p, 0.05, 0.97);
+    return f.grounded && f.speed < 20 ? 1 : 0.5;
   }
 
   private ejectNow(): void {
@@ -967,8 +966,20 @@ export class Game {
       if (this.match.cfg.lives) {
         let b = 0;
         let r = 0;
-        for (const f of this.combat.fighters) if (f.alive || f.lives > 0) (f.team === 'blue' ? b++ : r++);
-        this.match.setRemaining(b, r);
+        let bl = 0;
+        let rl = 0;
+        for (const f of this.combat.fighters) {
+          if (!(f.alive || f.lives > 0)) continue;
+          const l = Math.max(0, f.lives);
+          if (f.team === 'blue') {
+            b++;
+            bl += l;
+          } else {
+            r++;
+            rl += l;
+          }
+        }
+        this.match.setRemaining(b, r, bl, rl);
       }
       if (!this.match.over) this.match.update(dt);
       if (this.match.over && this.state !== 'results') this.endMatch();
@@ -1125,20 +1136,36 @@ export class Game {
   private checkService(dt: number): void {
     const f = this.player.flight;
     const fg = this.fighter;
-    this.serviceTimer = f.grounded && f.speed < 6 ? this.serviceTimer + dt : 0;
-    if (this.serviceTimer < 0.2 || !fg.needsService()) return;
+    const stopped = f.grounded && f.speed < 6;
+    const surf = this.world.surfaceAt(f.pos.x, f.pos.z, _surf);
     const near = this.world.nearestAirstrip(f.pos.x, f.pos.z);
-    const apron = this.world.surfaceAt(f.pos.x, f.pos.z, _surf).onApron;
-    if (near.def.team !== 'blue' || !apron) return;
+    // service needs the aircraft stopped ON a friendly runway (the apron and open ground do not count)
+    const onStrip = stopped && surf.onRunway && near.def.team === 'blue';
+    this.serviceInfo = null;
+    if (!onStrip || !fg.needsService()) {
+      this.serviceTimer = 0;
+      fg.invulnerable = false;
+      if (stopped && fg.needsService()) {
+        this.serviceHint -= dt;
+        if (this.serviceHint <= 0) {
+          this.serviceHint = 6;
+          this.say(surf.onApron && !surf.onRunway ? 'MOVE ONTO THE RUNWAY TO BE SERVICED' : 'STOP ON A BLUE RUNWAY TO REARM AND REPAIR', 2.5);
+        }
+      }
+      return;
+    }
+    this.serviceTimer += dt;
     const repair = fg.needsRepair();
     const need = repair ? SERVICE_REPAIR : SERVICE_REARM;
+    // nobody can shoot you while the crew is working
+    fg.invulnerable = true;
     if (this.serviceTimer < need) {
-      const left = Math.ceil(need - this.serviceTimer);
-      this.say(`${repair ? 'REPAIRING AND REARMING' : 'REARMING AND REFUELING'}  ${left} s  ·  stay stopped`, 0.4);
+      this.serviceInfo = { label: repair ? 'REPAIRING AND REARMING' : 'REARMING AND REFUELING', left: need - this.serviceTimer, total: need };
       return;
     }
     fg.service();
     this.serviceTimer = 0;
+    this.serviceInfo = null;
     this.say(repair ? 'REPAIRED  ·  REARMED  ·  REFUELED' : 'REARMED  ·  REFUELED', 3);
   }
 
@@ -1222,7 +1249,7 @@ export class Game {
     return {
       title: s.sortie === 'training' ? 'TRAINING RANGE' : s.sortie === 'freeflight' ? 'FREE FLIGHT' : s.sortie === 'elimination' ? 'LAST STAND' : 'TEAM DEATHMATCH',
       score: m ? m.score : { blue: sum('blue'), red: sum('red') },
-      info: m ? (m.cfg.lives ? 'PILOTS LEFT   ·   3 LIVES EACH' : `FIRST TO ${m.cfg.scoreLimit}${m.remaining !== null ? '   ·   ' + formatClock(m.remaining) : ''}`) : '',
+      info: m ? (m.cfg.lives ? `PILOTS LEFT   ·   3 LIVES EACH${m.remaining !== null ? '   ·   ' + formatClock(m.remaining) : ''}` : `FIRST TO ${m.cfg.scoreLimit}${m.remaining !== null ? '   ·   ' + formatClock(m.remaining) : ''}`) : '',
       rows: fighters.map((f) => ({
         name: f.isPlayer ? 'You' : f.name,
         aircraft: f.aircraft.def.name,
@@ -1266,7 +1293,7 @@ export class Game {
     let goal: string;
     if (s.sortie === 'elimination') {
       title = 'LAST STAND';
-      goal = `Three lives each. Destroy every pilot on the RED team before they do the same to you. Ejecting (hold ${keys('eject')}) can save a life, but not always.`;
+      goal = `Three lives each. Destroy every pilot on the RED team before they do the same to you${s.timeLimit ? ' (or have more pilots left when ' + s.timeLimit + ' minutes are up)' : ''}. Ejecting (hold ${keys('eject')}) on the ground always saves the life; in the air it is 50/50.`;
     } else if (s.sortie === 'tdm') {
       title = 'TEAM DEATHMATCH';
       goal = `Shoot down the RED team. First side to ${s.scoreLimit} kills wins${s.timeLimit ? ' (or most kills in ' + s.timeLimit + ' min)' : ''}.`;
@@ -1284,7 +1311,31 @@ export class Game {
     this.briefUntil = this.clock + 22;
   }
 
+  private serviceText = '';
+
+  /** The big repair / rearm countdown. */
+  private updateServiceHud(): void {
+    if (this.crashed) this.serviceInfo = null;
+    const s = this.serviceInfo;
+    if (!s) {
+      if (this.serviceText) {
+        this.serviceEl.style.display = 'none';
+        this.serviceText = '';
+      }
+      return;
+    }
+    const left = Math.ceil(s.left);
+    const text = `${s.label}|${left}`;
+    this.serviceEl.style.display = 'flex';
+    if (text !== this.serviceText) {
+      this.serviceText = text;
+      this.serviceEl.innerHTML = `<span>${s.label}</span><b>${left}</b><i>seconds  ·  protected while the crew works  ·  stay stopped</i>`;
+    }
+    this.serviceEl.style.setProperty('--p', String(1 - s.left / s.total));
+  }
+
   private updateMatchHud(): void {
+    this.updateServiceHud();
     this.briefEl.style.opacity = this.clock < this.briefUntil ? String(Math.min(1, (this.briefUntil - this.clock) / 2)) : '0';
     const m = this.match;
     if (!m || this.state === 'results') {
@@ -1298,7 +1349,7 @@ export class Game {
     this.matchText = text;
     if (m.cfg.lives) {
       const l = Math.max(0, this.fighter.lives);
-      this.matchEl.innerHTML = `<span class="b">${m.score.blue}</span><span class="t">${'♥'.repeat(l)}${'♡'.repeat(Math.max(0, LIVES - l))}</span><span class="r">${m.score.red}</span><span class="lim">PILOTS LEFT  ·  YOUR LIVES</span>`;
+      this.matchEl.innerHTML = `<span class="b">${m.score.blue}</span><span class="t">${rem === null ? '∞' : formatClock(rem)}</span><span class="r">${m.score.red}</span><span class="lim">PILOTS LEFT   ·   YOUR LIVES ${'♥'.repeat(l)}${'♡'.repeat(Math.max(0, LIVES - l))}</span>`;
       return;
     }
     this.matchEl.innerHTML = `<span class="b">${m.score.blue}</span><span class="t">${rem === null ? '∞' : formatClock(rem)}</span><span class="r">${m.score.red}</span><span class="lim">FIRST TO ${m.cfg.scoreLimit}</span>`;

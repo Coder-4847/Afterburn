@@ -59,6 +59,8 @@ export class Fighter implements Target, Attacker {
   lockSpeed = 1;
   /** Lives left (Infinity outside Last Stand). Spent when the aircraft is destroyed with the pilot aboard. */
   lives = Infinity;
+  /** Being serviced on the runway: nothing can hurt it. */
+  invulnerable = false;
   /** The last landing damaged the aircraft: servicing takes longer. */
   crashLanded = false;
   /** Seconds since the last time this fighter was hit (HUD flash, AI reactions). */
@@ -166,7 +168,7 @@ export class Fighter implements Target, Attacker {
   }
 
   hit(h: SegHit, damage: number, attacker: Attacker | null, weapon: string, incendiary: boolean): void {
-    if (this.state !== 'alive') return;
+    if (this.state !== 'alive' || this.invulnerable) return;
     const m = this.damage.get(h.moduleId);
     const before = this.damage.health();
     const scaled = damage * this.damageScale;
@@ -179,7 +181,7 @@ export class Fighter implements Target, Attacker {
   }
 
   blast(point: Vector3, radius: number, warhead: number, attacker: Attacker | null, weapon: string): void {
-    if (this.state !== 'alive') return;
+    if (this.state !== 'alive' || this.invulnerable) return;
     const f = this.aircraft.flight;
     const all: DamageEvent[] = [];
     let total = 0;
@@ -319,6 +321,7 @@ export class Fighter implements Target, Attacker {
   /** Repair, refuel and rearm without touching position or life state (landing on a friendly runway). */
   service(): void {
     this.crashLanded = false;
+    this.invulnerable = false;
     this.damage.repair();
     this.weapons.rearm();
     this.hidden.clear();
