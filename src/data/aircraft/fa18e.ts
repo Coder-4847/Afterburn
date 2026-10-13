@@ -15,6 +15,7 @@ export const FA18E: AircraftDef = {
   fullName: 'F/A-18E Super Hornet',
   faction: 'west',
   role: 'Carrier multirole fighter',
+  maneuver: 'cobra',
   blurb: 'Rugged and docile. Holds control at very high angle of attack and takes a beating, but runs out of speed and energy sooner than the rest.',
   flight: {
     stallSpeed: 52, maxSpeed: 560, twMil: 0.55, twAb: 0.92,

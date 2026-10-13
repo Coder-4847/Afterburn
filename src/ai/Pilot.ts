@@ -5,6 +5,7 @@ import { GRAVITY } from '../data/weapons';
 import { WORLD_BOUNDARY } from '../data/tuning';
 import { DEG, clamp } from '../core/math';
 import { MouseAim } from '../flight/MouseAim';
+import { MANEUVERS } from '../flight/Maneuvers';
 import { scanTerrain, type TerrainThreat } from '../flight/TerrainAssist';
 import type { Combat } from '../weapons/Combat';
 import type { Brain, Fighter } from '../weapons/Fighter';
@@ -30,12 +31,24 @@ export interface SkillDef {
   bvr: number;
   /** Fraction of full stick used in a turn. */
   g: number;
+  /** Engine thrust multiplier (acceleration and energy recovery). */
+  thrust: number;
+  /** 0..1: how readily the pilot closes for a gun attack and keeps it up, instead of sitting off and shooting missiles. */
+  aggression: number;
+  /** 0..1: how often a pilot with a signature move throws it at a gun on the tail. */
+  maneuver: number;
+  /** 0..1 cannon aim assist. */
+  assist: number;
+  /** Multiplier on the damage this pilot's weapons do. */
+  damage: number;
 }
 
 export const SKILLS: Record<AiSkill, SkillDef> = {
-  rookie: { label: 'Rookie', reaction: 1.5, aimErr: 0.032, gunAng: 0.05, gunRange: 700, missileCool: 55, cm: 0.35, bvr: 4500, g: 0.7 },
-  regular: { label: 'Regular', reaction: 0.8, aimErr: 0.016, gunAng: 0.035, gunRange: 900, missileCool: 40, cm: 0.65, bvr: 7000, g: 0.88 },
-  ace: { label: 'Ace', reaction: 0.3, aimErr: 0.006, gunAng: 0.024, gunRange: 1000, missileCool: 24, cm: 0.95, bvr: 10000, g: 1 },
+  rookie: { label: 'Rookie', reaction: 1.1, aimErr: 0.026, gunAng: 0.055, gunRange: 760, missileCool: 50, cm: 0.45, bvr: 5200, g: 0.78, thrust: 0.68, aggression: 0.5, maneuver: 0, assist: 0.45, damage: 1 },
+  regular: { label: 'Regular', reaction: 0.65, aimErr: 0.014, gunAng: 0.04, gunRange: 950, missileCool: 42, cm: 0.75, bvr: 7500, g: 0.92, thrust: 0.76, aggression: 0.65, maneuver: 0.1, assist: 0.7, damage: 1.1 },
+  ace: { label: 'Ace', reaction: 0.3, aimErr: 0.0065, gunAng: 0.028, gunRange: 1100, missileCool: 36, cm: 0.85, bvr: 10000, g: 1, thrust: 0.86, aggression: 0.8, maneuver: 0.3, assist: 0.95, damage: 1.25 },
+  veteran: { label: 'Veteran', reaction: 0.2, aimErr: 0.0038, gunAng: 0.022, gunRange: 1250, missileCool: 30, cm: 0.9, bvr: 11500, g: 1, thrust: 0.96, aggression: 0.92, maneuver: 0.55, assist: 1, damage: 1.4 },
+  elite: { label: 'Elite', reaction: 0.1, aimErr: 0.0016, gunAng: 0.018, gunRange: 1400, missileCool: 26, cm: 0.95, bvr: 13000, g: 1, thrust: 1.06, aggression: 1, maneuver: 0.85, assist: 1, damage: 1.6 },
 };
 
 type Mode = 'patrol' | 'bvr' | 'wvr' | 'defend' | 'evade' | 'rtb' | 'strike';
@@ -91,6 +104,9 @@ export class PilotBrain implements Brain {
   private strikeRocketT = 0;
   /** Seconds spent outside the combat zone: the same countdown the player gets, then the jet is lost. */
   private outT = 0;
+  /** Seconds until this pilot may throw its signature move again. */
+  private moveCool = 3 + Math.random() * 6;
+  private wasMoving = false;
 
   constructor(
     private combat: Combat,
@@ -112,6 +128,8 @@ export class PilotBrain implements Brain {
     this.outT = 0;
     this.strikeBombs = 2;
     this.missileCool = 14 + Math.random() * 14;
+    this.moveCool = 3 + Math.random() * 6;
+    this.wasMoving = false;
     this.aim.snapTo(f.aircraft.flight);
   }
 
@@ -128,6 +146,17 @@ export class PilotBrain implements Brain {
     this.noiseT -= dt;
     this.defendT -= dt;
     this.notchT -= dt;
+    this.moveCool -= dt;
+    // a signature move flies itself: the script has the controls until it is over
+    if (fl.maneuver) {
+      this.wasMoving = true;
+      this.aim.snapTo(fl);
+      return;
+    }
+    if (this.wasMoving) {
+      this.wasMoving = false;
+      this.aim.snapTo(fl);
+    }
     if (this.noiseT <= 0) {
       this.noiseT = 0.3;
       this.noise.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(sk.aimErr * 2);
@@ -141,13 +170,13 @@ export class PilotBrain implements Brain {
       const th = threats[0];
       if (this.evadeT <= 0) this.evadeSide = Math.random() < 0.5 ? -1 : 1;
       this.evadeT = 3;
-      if (this.cmCool <= 0 && th.eta < 4.5 + sk.cm * 1.5) {
+      if (this.cmCool <= 0 && th.eta < 4.5 + sk.cm * 2) {
         if (Math.random() < sk.cm) {
           // late in the fight, throw a pair: one flare is easy to ignore
           if (th.missile.kind === 'ir') this.combat.dispense(f, 'flare', th.eta < 2.5 ? 2 : 1);
           else this.combat.dispense(f, 'chaff', th.eta < 2.5 ? 2 : 1);
         }
-        this.cmCool = th.missile.kind === 'ir' ? 1.0 : 1.8;
+        this.cmCool = (th.missile.kind === 'ir' ? 1.0 : 1.8) * (1.15 - sk.cm * 0.4);
       }
       this.evadeLos.copy(th.missile.pos).sub(f.pos);
       this.evadeLos.y = 0;
@@ -189,7 +218,7 @@ export class PilotBrain implements Brain {
     let ab = false;
     const strikeLeft = w.remaining('bomb') + w.remaining('rocket');
     const needsRtb =
-      f.damage.health() < 0.3 || f.damage.fuel < 0.14 || (w.remaining('ir') + w.remaining('radar') === 0 && w.gunAmmo < 25) ||
+      f.damage.health() < 0.3 - 0.12 * sk.aggression || f.damage.fuel < 0.14 || (w.remaining('ir') + w.remaining('radar') === 0 && w.gunAmmo < 25) ||
       (this.strikeGoal !== null && strikeLeft === 0);
     const strikeTgt = this.strikeGoal && strikeLeft > 0 ? this.strikeGoal() : null;
     if (evading || this.evadeT > 0) {
@@ -367,6 +396,7 @@ export class PilotBrain implements Brain {
         if (m === f || m.team !== f.team || m.weapons.target !== o) continue;
         score += m.isPlayer ? -350 : 1800; // join the player's target; do not pile onto another AI's
       }
+      if (o.isPlayer) score -= 300 + 700 * this.sk.aggression; // the human is who the fight is for: come to them
       if (o.weapons.target === f) score -= 1500; // someone shooting at us comes first
       else if (o.weapons.target && o.weapons.target.team === f.team && o.weapons.target.kind === 'air') score -= 800; // peel one off a teammate
       score -= (1 - o.damage.health()) * 1200; // a hurt jet is a kill waiting to happen
@@ -580,9 +610,17 @@ export class PilotBrain implements Brain {
     }
     if (this.defendT > 0) {
       this.mode = 'defend';
+      // a gun close behind: a pilot with a signature move throws it, and the attacker overshoots
+      if (sk.maneuver > 0 && this.moveCool <= 0 && dist < 800 && Math.random() < sk.maneuver * dt * 1.6) {
+        const mv = MANEUVERS[f.aircraft.def.maneuver];
+        if (fl.agl > mv.minAgl + 60 && this.edgePressure(f, _in) < 0.8 && fl.maneuverBlock(mv) === null && fl.startManeuver(mv) === null) {
+          this.moveCool = 9 + Math.random() * 9;
+          return Math.min(maxV * 0.8, 380);
+        }
+      }
       // hard turn across the attacker's nose, pulling down a little to keep energy
       out.crossVectors(los, UP).multiplyScalar(this.breakSide);
-      out.y = -0.25;
+      out.y = -0.25 + (sk.aggression > 0.78 ? Math.sin(f.clock * 2.7) * 0.3 : 0);
       return Math.min(maxV * 0.8, 380);
     }
 
@@ -603,7 +641,7 @@ export class PilotBrain implements Brain {
       if (w.group === 1 && w.lock.locked && dist < sk.bvr && angLos < 50 * DEG && this.missileCool <= 0 && this.combat.threats(en).length < 2) {
         if (this.combat.fireMissile(f)) {
           this.missileCool = sk.missileCool;
-          this.crank = 6;
+          this.crank = 6 - 3.5 * sk.aggression;
           this.crankSide = Math.random() < 0.5 ? -1 : 1;
         }
       }
@@ -627,7 +665,7 @@ export class PilotBrain implements Brain {
       // target is off to the side or behind: a level turn toward it (a vertical loop wastes the fight upstairs)
       out.y = clamp(out.y, -0.3, 0.3);
       out.normalize();
-    } else if (dist < 650) {
+    } else if (dist < 650 && sk.aggression < 0.78) {
       // lag pursuit: aim a little behind the target so we stay on its tail without overshooting
       out.addScaledVector(en.vel, -0.0008 * dist).normalize();
     }
@@ -646,15 +684,19 @@ export class PilotBrain implements Brain {
     this.burstRest -= dt;
     if (this.burst > 0) {
       this.burst -= dt;
-      if (this.burst <= 0) this.burstRest = 0.5 + Math.random() * 0.9;
+      if (this.burst <= 0) this.burstRest = 0.2 + (1 - sk.aggression) * 0.8 + Math.random() * 0.5;
     }
-    if (this.burst <= 0 && this.burstRest <= 0 && dist < sk.gunRange * 1.15 && angLead < sk.gunAng * 1.4) this.burst = 1.1;
+    const cone = sk.gunAng * (dist < 450 ? 2.4 : 1.4);
+    if (this.burst <= 0 && this.burstRest <= 0 && dist < sk.gunRange * 1.15 && angLead < cone) this.burst = 0.8 + sk.aggression * 1.1;
     if (this.burst > 0 && w.gunAmmo > 0) this.combat.fireGun(f, dt);
 
     // missiles: infrared when the target is in the seeker cone
-    if (w.group === 0 && w.lock.locked && dist > 1100 && dist < 4200 && angLos < 35 * DEG && this.missileCool <= 0 && w.remaining('ir') > 0 && this.combat.threats(en).length < 2) {
+    // inside ~1.3-1.8 km (more for the aggressive) the cannon is the weapon: pilots close the distance for a gun kill
+    const gunZone = 900 + 900 * sk.aggression;
+    const inFlight = sk.aggression > 0.7 ? 1 : 2;
+    if (w.group === 0 && w.lock.locked && dist > gunZone && dist < 4200 && angLos < 35 * DEG && this.missileCool <= 0 && w.remaining('ir') > 0 && this.combat.threats(en).length < inFlight) {
       if (this.combat.fireMissile(f)) this.missileCool = sk.missileCool;
-    } else if (w.group === 1 && w.lock.locked && dist > 900 && this.missileCool <= 0 && angLos < 45 * DEG && this.combat.threats(en).length < 2) {
+    } else if (w.group === 1 && w.lock.locked && dist > gunZone && this.missileCool <= 0 && angLos < 45 * DEG && this.combat.threats(en).length < inFlight) {
       if (this.combat.fireMissile(f)) this.missileCool = sk.missileCool;
     }
 

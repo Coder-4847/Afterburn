@@ -15,6 +15,7 @@ export const F22: AircraftDef = {
   fullName: 'F-22 Raptor',
   faction: 'west',
   role: 'Stealth air-superiority fighter',
+  maneuver: 'cobra',
   blurb: 'Supercruise thrust, pitch vectoring and a radar signature the size of a marble. Keeps its energy and its control deep into a fight.',
   flight: {
     stallSpeed: 50, maxSpeed: 650, twMil: 0.88, twAb: 1.3,

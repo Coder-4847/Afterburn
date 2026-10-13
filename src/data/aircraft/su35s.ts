@@ -15,6 +15,7 @@ export const SU35S: AircraftDef = {
   fullName: 'Su-35S Flanker-E',
   faction: 'russia',
   role: 'Heavy air-superiority fighter',
+  maneuver: 'kulbit',
   blurb: 'Huge wing, huge engines, 3D thrust vectoring. Can hang on the edge of a stall and swing its nose at you, and it absorbs a lot of punishment.',
   flight: {
     stallSpeed: 51, maxSpeed: 640, twMil: 0.68, twAb: 1.14,

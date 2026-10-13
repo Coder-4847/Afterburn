@@ -15,6 +15,7 @@ export const RAFALE: AircraftDef = {
   fullName: 'Dassault Rafale C',
   faction: 'west',
   role: 'Omnirole fighter',
+  maneuver: 'barrelRoll',
   blurb: 'Canard-delta agility with strong low-speed handling and a small signature for its class. A sharp turner that loves a knife fight.',
   flight: {
     stallSpeed: 48, maxSpeed: 600, twMil: 0.62, twAb: 1.02,

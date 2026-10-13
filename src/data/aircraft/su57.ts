@@ -15,6 +15,7 @@ export const SU57: AircraftDef = {
   fullName: 'Su-57 Felon',
   faction: 'russia',
   role: 'Stealth multirole fighter',
+  maneuver: 'bell',
   blurb: 'Blended body, canted all-moving tails and 3D thrust vectoring. Pivots where others stall, and keeps a low radar profile.',
   flight: {
     stallSpeed: 50, maxSpeed: 650, twMil: 0.8, twAb: 1.2,

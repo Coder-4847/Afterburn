@@ -118,7 +118,7 @@ export class Airstrip {
   get dirZ(): number { return this.sin; }
 
   isOnRunway(u: number, v: number): boolean {
-    return Math.abs(u) <= this.def.length / 2 + 40 && Math.abs(v) <= this.def.width / 2 + FLIGHT.runwayMargin;
+    return Math.abs(u) <= this.def.length / 2 + 70 && Math.abs(v) <= this.def.width / 2 + FLIGHT.runwayMargin;
   }
 
   isOnApron(u: number, v: number): boolean {

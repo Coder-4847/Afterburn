@@ -17,6 +17,7 @@ import { GRAVITY, STORES } from '../data/weapons';
 import { MAPS, mapIdFor } from '../data/maps';
 import { AIM, FLIGHT, TERRAIN_ASSIST, WORLD_BOUNDARY } from '../data/tuning';
 import { MouseAim } from '../flight/MouseAim';
+import { MANEUVERS } from '../flight/Maneuvers';
 import { scanTerrain, type TerrainThreat } from '../flight/TerrainAssist';
 import type { SurfaceInfo } from '../flight/FlightModel';
 import { CameraRig } from '../render/CameraRig';
@@ -51,6 +52,8 @@ const _vel = new Vector3();
 const _tmp = new Vector3();
 const _h1 = new Vector3();
 const _h2 = new Vector3();
+const _hr = new Vector3();
+const _hu = new Vector3();
 const _surf: SurfaceInfo = { height: 0, onRunway: false, onApron: false };
 const _mouse = { x: 0, y: 0 };
 const _cam = new Vector3();
@@ -165,7 +168,8 @@ export class Game {
       respawnRunway: () => { this.spawnRunway(); void this.resume(); },
       respawnCarrier: () => { this.spawnCarrier(); void this.resume(); },
       hangar: () => this.openHangar(),
-      setup: () => { this.builtSig = ''; this.state = 'ready'; this.menus.showReady(); },
+      setup: () => { this.builtSig = ''; this.state = 'ready'; this.hud.setVisible(false); this.menuBackdrop(); this.menus.showReady(); },
+      mainMenu: () => this.toMainMenu(),
       rematch: () => { this.builtSig = ''; void this.rebuild(); },
       aircraftName: () => getAircraft(this.settings.value.aircraftId).fullName,
       changed: (k) => this.applySetting(k),
@@ -229,9 +233,12 @@ export class Game {
     // two warm-up frames so shaders compile before the menu appears
     this.renderFrame(0);
     this.renderFrame(0);
+    this.hangar.setAircraft(getAircraft(this.settings.value.aircraftId), TEAM_BLUE);
+    this.renderHangar(0);
 
     this.state = 'ready';
-    this.menus.showReady();
+    this.menuBackdrop();
+    this.menus.showMain();
     this.lastTime = performance.now();
     requestAnimationFrame(this.loop);
   }
@@ -341,7 +348,8 @@ export class Game {
     this.renderFrame(0);
     progress(1, 'Ready');
     this.state = 'ready';
-    this.menus.showReady();
+    this.menuBackdrop();
+    this.menus.showLaunch();
     this.menus.flashPrimary('READY  -  CLICK TO FLY');
   }
 
@@ -558,8 +566,30 @@ export class Game {
     f.mountVisuals();
   }
 
+  /** The menu screens sit over a slow orbit around the selected jet, afterburner lit. */
+  private menuBackdrop(): void {
+    if (!this.hangar) return;
+    this.hangar.menu = true;
+    this.hangar.setAircraft(getAircraft(this.settings.value.aircraftId), TEAM_BLUE);
+    this.hangar.setLoadout(this.fighter.loadout.items, this.fighter.loadout.arm);
+  }
+
+  /** Abandon whatever is running and go to the title screen. */
+  private toMainMenu(): void {
+    this.builtSig = ''; // a sortie that was left is never resumed
+    this.state = 'ready';
+    this.input.captureKeys = false;
+    this.input.exitLock();
+    document.body.classList.remove('playing');
+    this.hud.setVisible(false);
+    this.audio.lockTone('off', 0);
+    this.menuBackdrop();
+    this.menus.showMain();
+  }
+
   private openHangar(): void {
     this.hangarReturn = this.state === 'paused' ? 'paused' : 'ready';
+    if (this.hangar) this.hangar.menu = false;
     this.state = 'hangar';
     this.menus.hide();
     this.hud.setVisible(false);
@@ -571,7 +601,10 @@ export class Game {
     this.refreshLoadout();
     this.state = this.hangarReturn;
     if (this.hangarReturn === 'paused') this.menus.showPause();
-    else this.menus.showReady();
+    else {
+      this.menuBackdrop();
+      this.menus.showMain();
+    }
   }
 
   private say(text: string, seconds = 2.2): void {
@@ -608,10 +641,13 @@ export class Game {
     return sp;
   }
 
+  /** Distance to the nearest place an aircraft can land: an airstrip, or an active carrier deck on a carrier map. */
   private distToStrip(): number {
     const p = this.player.flight.pos;
     const a = this.world.nearestAirstrip(p.x, p.z);
-    return Math.hypot(a.def.x - p.x, a.def.z - p.z);
+    let d = Math.hypot(a.def.x - p.x, a.def.z - p.z);
+    for (const k of this.world.decks) if (k.active) d = Math.min(d, Math.hypot(k.x - p.x, k.z - p.z));
+    return d;
   }
 
   spawnAir(): void {
@@ -851,7 +887,7 @@ export class Game {
     }
     if (this.state !== 'loading') this.updateMusic(dt);
 
-    if (this.state === 'hangar') this.renderHangar(dt);
+    if (this.state === 'hangar' || this.state === 'ready') this.renderHangar(dt);
     else if (this.state !== 'loading') this.renderFrame(this.state === 'playing' ? dt : 0);
     this.input.endFrame();
     this.updateFps(dt);
@@ -938,6 +974,7 @@ export class Game {
         this.say(c.gearDown ? 'GEAR DOWN' : 'GEAR UP', 1.4);
       }
     }
+    if (inp.pressed('maneuver') && !this.crashed && !this.spectating && this.fighter.state === 'alive') this.signatureMove();
     if (this.spectating && inp.pressed('cycleTarget')) this.specIndex++;
     this.processEject(dt);
     this.processWeaponInput();
@@ -960,10 +997,39 @@ export class Game {
     if (this.rig.looking) {
       this.rig.addLook(_mouse.x, _mouse.y);
     } else if (!this.recovering && !this.crashed) {
-      this.aim.addMouse(_mouse.x, _mouse.y, this.rig.right, this.rig.up, s.mouseSensitivity, s.invertY);
+      this.aim.addMouse(_mouse.x, _mouse.y, this.rig.right, this.rig.up, s.mouseSensitivity, s.invertY, s.mouseSensitivityY);
     }
     if (this.kb.pitch !== 0 || this.kb.roll !== 0 || this.kb.yaw !== 0) this.aim.relaxToNose(f, 1 - Math.exp(-6 * dt));
     this.aim.clampToNose(f);
+    // a signature move flies itself: the reticle rides on the nose until it is over
+    if (f.maneuver) this.aim.snapTo(f);
+  }
+
+  /** The signature-move key: start the airframe's move, or say why it cannot. */
+  private signatureMove(): void {
+    const f = this.player.flight;
+    const def = MANEUVERS[this.player.def.maneuver];
+    const name = def.name.toUpperCase();
+    const unit = this.settings.value.speedUnit;
+    const spd = (v: number): string => (unit === 'kmh' ? `${Math.round(v * 3.6)} km/h` : unit === 'kt' ? `${Math.round(v * 1.94384)} kt` : `${Math.round(v)} m/s`);
+    const why = f.startManeuver(def);
+    if (!why) {
+      this.say(name, 1.8);
+      this.rig.addShake(0.45);
+      this.audio.whoosh(f.pos);
+      this.recovering = false;
+      this.aim.snapTo(f);
+      return;
+    }
+    switch (why) {
+      case 'slow': this.say(`${name}: TOO SLOW  ·  NEED ${spd(def.minSpeed)}`, 1.8); break;
+      case 'fast': this.say(`${name}: TOO FAST  ·  UNDER ${spd(def.maxSpeed)}`, 1.8); break;
+      case 'low': this.say(`${name}: TOO LOW  ·  NEED ${Math.round(def.minAgl)} m`, 1.8); break;
+      case 'cooldown': this.say(`${name}: READY IN ${Math.ceil(f.maneuverCool)} s`, 1.2); break;
+      case 'ground': this.say(`${name}: AIRBORNE ONLY`, 1.2); break;
+      case 'damaged': this.say(`${name}: AIRFRAME TOO DAMAGED`, 1.8); break;
+      default: break;
+    }
   }
 
   private stepPhysics(dt: number): void {
@@ -978,14 +1044,17 @@ export class Game {
     if (fg.state === 'wreck') f.step(dt, c, this.world); // tumbling to the ground; Combat explodes it on impact
 
     if (!this.crashed && fg.state === 'alive') {
-      // ---- terrain avoidance ----
-      this.terrainAssist(dt);
+      if (!f.maneuver) {
+        // ---- terrain avoidance ----
+        this.terrainAssist(dt);
 
-      // ---- control law ----
-      this.aim.compute(f, diff, this.cmd);
-      c.pitch = this.kb.pitch !== 0 ? this.kb.pitch : this.cmd.pitch;
-      c.roll = this.kb.roll !== 0 ? this.kb.roll : this.cmd.roll;
-      c.yaw = clamp(this.cmd.yaw + this.kb.yaw, -1, 1);
+        // ---- control law ----
+        this.aim.compute(f, diff, this.cmd);
+        c.pitch = this.kb.pitch !== 0 ? this.kb.pitch : this.cmd.pitch;
+        c.roll = this.kb.roll !== 0 ? this.kb.roll : this.cmd.roll;
+        c.yaw = clamp(this.cmd.yaw + this.kb.yaw, -1, 1);
+        c.rudder = this.kb.yaw;
+      }
       void s;
 
       // carrier catapult launch: shake and a call-out when the shuttle fires, then the nose is steered up through the climb-out
@@ -1021,12 +1090,20 @@ export class Game {
 
       // arcade quality of life: tuck the gear away once clearly airborne and fast. Never near an airstrip: that is where you
       // want it down (a landing approach, or a touch-and-go), and it must stay down until you raise it yourself.
-      if (diff.id === 'arcade' && c.gearDown && f.gearPos > 0.99 && !f.grounded && f.agl > 120 && f.speed > 130 && this.distToStrip() > 5000) {
+      const dStrip = this.distToStrip();
+      if (diff.id === 'arcade' && c.gearDown && f.gearPos > 0.99 && !f.grounded && f.agl > 120 && f.speed > 130 && dStrip > 5000) {
         c.gearDown = false;
         this.say('GEAR UP', 1.4);
       }
+      // Arcade landing assist: slow, low, descending and close to a runway or deck with the wheels still up: put them down
+      // (a belly landing is the one thing that reliably wrecks the undercarriage)
+      if (diff.id === 'arcade' && !c.gearDown && !f.grounded && !f.mods.gearBroken && f.agl < 110 && f.speed < 125 && f.vel.y < -1.5 && dStrip < 1800 && f.launchAssist <= 0 && !this.deckLaunched) {
+        c.gearDown = true;
+        this.say('GEAR DOWN  ·  LANDING ASSIST', 1.8);
+      }
 
       f.step(dt, c, this.world);
+      if (f.maneuverEnd) this.aim.snapTo(f);
 
       if (f.touchdown) { this.say('GOOD LANDING', 2); this.rig.addShake(0.35); }
       if (f.impact) {
@@ -1103,9 +1180,8 @@ export class Game {
   private terrainAssist(dt: number): void {
     const f = this.player.flight;
     const mode = this.settings.value.terrainAssist;
-    // don't fight a deliberate landing approach
-    const near = this.world.nearestAirstrip(f.pos.x, f.pos.z);
-    const dNear = Math.hypot(near.def.x - f.pos.x, near.def.z - f.pos.z);
+    // don't fight a deliberate landing approach (a carrier deck is a landing site too)
+    const dNear = this.distToStrip();
     // (also when the gear is still up but we are slow and low near a runway: that is a landing in the making)
     const landing = f.grounded || (f.gearPos > 0.5 && dNear < 3500 && f.agl < 400) || (dNear < 2500 && f.agl < 250 && f.speed < 170);
     if (mode === 'off' || landing) {
@@ -1440,7 +1516,7 @@ export class Game {
     const find = this.mode === 'carrier' ? 'The Red carrier and its escorts are the red squares on the minimap; the line at the top of the screen gives its range and bearing. Enemy fighters are red markers.' : this.mode === 'tdm' || this.mode === 'elimination' ? 'Red markers on the HUD and the minimap show where the enemy is. The arrow at the screen edge points to the nearest one.' : 'Red markers show enemy aircraft; the minimap (top left) shows everything nearby.';
     this.briefEl.innerHTML =
       `<b>${title}</b><span>${goal}</span><span>${find}</span>` +
-      `<i>${keys('cycleTarget')} pick a target  ·  hold ${keys('fireGun')} cannon  ·  ${keys('fireMissile')} fire missile (let the ring fill first)  ·  ${keys('flares')} flares  ${keys('chaff')} chaff  ·  ${keys('map')} map</i>`;
+      `<i>${keys('cycleTarget')} pick a target  ·  hold ${keys('fireGun')} cannon  ·  ${keys('fireMissile')} fire missile (let the ring fill first)  ·  ${keys('flares')} flares  ${keys('chaff')} chaff  ·  ${keys('maneuver')} ${MANEUVERS[this.player.def.maneuver].name.toLowerCase()}  ·  ${keys('map')} map</i>`;
     this.briefUntil = this.clock + 22;
   }
 
@@ -1681,9 +1757,20 @@ export class Game {
       nearest = { name: '', dist: n.dist, bearing: brg.bearing, elevation: brg.elevation };
     }
 
+    // the airframe's signature move: ready, cooling down, being flown, or blocked (and why)
+    const mv = MANEUVERS[def.maneuver];
+    const why = fl.maneuverBlock(mv);
+    const blocked: Record<string, string> = { slow: 'TOO SLOW', fast: 'TOO FAST', low: 'TOO LOW', ground: 'AIRBORNE', damaged: 'DAMAGED' };
+    const maneuver: CombatHud['maneuver'] = {
+      name: mv.name,
+      key: this.input.codes('maneuver').map(codeLabel)[0] ?? '',
+      state: fl.maneuver ? 'active' : fl.maneuverCool > 0 ? 'cooling' : why ? 'blocked' : 'ready',
+      note: fl.maneuver ? 'ACTIVE' : fl.maneuverCool > 0 ? Math.ceil(fl.maneuverCool) + ' s' : why ? (blocked[why] ?? '') : 'READY',
+    };
     return {
       report: dm.report().slice(0, 4),
       contacts: contacts.slice(0, 8),
+      maneuver,
       nearest,
       group: w.group,
       groupLabel: GROUP_LABEL[w.group],
@@ -1731,6 +1818,9 @@ export class Game {
     const sp = f.speed > 0.1 ? _vel.multiplyScalar(1 / f.speed) : null;
     const near = this.world.nearestAirstrip(f.pos.x, f.pos.z);
     const dNear = Math.hypot(near.def.x - f.pos.x, near.def.z - f.pos.z);
+    f.rightVec(_hr);
+    f.upVec(_hu);
+    const lim = f.difficulty.landing;
     const msg = this.message && this.message.until > this.clock ? this.message.text : null;
     const d: HudData = {
       speed: f.speed,
@@ -1741,7 +1831,12 @@ export class Game {
       power: f.power,
       ab: f.abLevel,
       g: f.gLoad,
+      gMax: p.def.flight.gLimit * f.difficulty.gMul,
       aoaDeg: f.aoa / DEG,
+      aoaStallDeg: p.def.flight.aoaStall,
+      roll: Math.atan2(-_hr.y, _hu.y),
+      vs: f.vel.y,
+      landing: { sink: lim.sink, speed: lim.speed },
       heading: f.heading(),
       pitch: Math.asin(clamp(_fwd.y, -1, 1)),
       gearPos: f.gearPos,
@@ -1754,7 +1849,7 @@ export class Game {
       aim: this.aim.aim,
       velocity: sp,
       origin: p.object.position,
-      nearestStrip: dNear < 7000 ? { name: near.def.name, dist: dNear } : null,
+      nearestStrip: dNear < 7000 ? { name: near.def.name, dist: dNear, bearing: Math.atan2(near.def.x - f.pos.x, -(near.def.z - f.pos.z)) } : null,
       cameraMode: this.rig.mode,
       visible: true,
       glare: this.settings.value.reduceMotion ? null : this.sunGlare(),
@@ -1762,6 +1857,9 @@ export class Game {
       speedFx: this.quality.screenFx && !this.settings.value.reduceMotion && this.state === 'playing' ? smoothstep(0.5, 1, f.speed / p.def.flight.maxSpeed) * 0.55 + f.abLevel * 0.3 : 0,
       combat: this.combatHud(),
       minimap: this.minimapData(),
+      maxSpeed: p.def.flight.maxSpeed,
+      stallSpeed: f.stallSpeedNow,
+      stick: { pitch: p.controls.pitch, roll: p.controls.roll, yaw: p.controls.yaw },
     };
     this.hud.update(d, this.rig.camera, dt);
   }

@@ -15,6 +15,7 @@ export const SU27: AircraftDef = {
   fullName: 'Su-27 Flanker',
   faction: 'russia',
   role: 'Air-superiority fighter',
+  maneuver: 'cobra',
   blurb: 'The classic Flanker. A massive wing, long range and excellent slow-speed handling, with sturdy structure; the radar sees it from far away.',
   flight: {
     stallSpeed: 57, maxSpeed: 650, twMil: 0.62, twAb: 1.08,

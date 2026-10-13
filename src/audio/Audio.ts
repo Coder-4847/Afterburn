@@ -201,6 +201,12 @@ export class GameAudio implements CombatAudio {
     this.burst(pos, { dur: 0.3, gain: 0.25, f0: 5000, f1: 1500, type: 'bandpass', q: 1.5, ref: 250 });
   }
 
+  /** Air tearing past the airframe: a signature move starting. */
+  whoosh(pos: Vector3): void {
+    this.burst(pos, { dur: 1.2, gain: 0.5, f0: 350, f1: 3000, type: 'bandpass', q: 0.8, ref: 500 });
+    this.tone(pos, { f0: 90, f1: 40, dur: 0.7, gain: 0.35, type: 'sawtooth', ref: 500 });
+  }
+
   rip(pos: Vector3): void {
     this.burst(pos, { dur: 0.7, gain: 0.8, f0: 900, f1: 120, type: 'lowpass', ref: 600 });
     this.tone(pos, { f0: 480, f1: 110, dur: 0.6, gain: 0.35, type: 'sawtooth', ref: 600 });

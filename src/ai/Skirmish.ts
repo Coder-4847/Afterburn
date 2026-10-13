@@ -73,7 +73,10 @@ export class Skirmish {
     f.loadout.items = presetLoadout(f.loadout.arm, striker ? 'Strike' : 'Dogfighter');
     f.weapons.rearm();
     f.mountVisuals();
-    f.aimAssist = { rookie: 0.35, regular: 0.6, ace: 0.9 }[this.skill];
+    const sk = SKILLS[this.skill];
+    f.aimAssist = sk.assist;
+    f.damageOut = sk.damage;
+    f.aiThrust = sk.thrust;
     let homes = this.map.airstrips.filter((a) => a.team === team);
     const own = this.fleet?.carriers[team];
     if (own) {

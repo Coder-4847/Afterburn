@@ -54,6 +54,10 @@ export class Fighter implements Target, Attacker {
   lastHit: { who: Attacker; weapon: string; t: number } | null = null;
   /** Multiplier on incoming damage (the player's difficulty setting). */
   damageScale = 1;
+  /** Multiplier on the damage this fighter deals (AI skill; 1 for the player). */
+  damageOut = 1;
+  /** Engine thrust multiplier for AI pilots (the player always has the full engine). */
+  aiThrust = 0.62;
   /** 0..1 gun aim assist and a multiplier on lock speed (set from the player's difficulty). */
   aimAssist = 0;
   lockSpeed = 1;
@@ -171,7 +175,7 @@ export class Fighter implements Target, Attacker {
     if (this.state !== 'alive' || this.invulnerable) return;
     const m = this.damage.get(h.moduleId);
     const before = this.damage.health();
-    const scaled = damage * this.damageScale;
+    const scaled = damage * this.damageScale * ((attacker as { damageOut?: number } | null)?.damageOut ?? 1);
     const ev = this.damage.damage(m, scaled, incendiary);
     const dealt = Math.max(0, scaled);
     this.noteAttack(attacker, weapon, dealt);
@@ -191,7 +195,7 @@ export class Fighter implements Target, Attacker {
       const d = _a.distanceTo(point) - 1.2;
       if (d >= radius) continue;
       const k = Math.pow(1 - clamp(d / radius, 0, 1), 1.4);
-      let amt = warhead * k * m.blastWeight * (0.85 + Math.random() * 0.3) * this.damageScale;
+      let amt = warhead * k * m.blastWeight * (0.85 + Math.random() * 0.3) * this.damageScale * ((attacker as { damageOut?: number } | null)?.damageOut ?? 1);
       // one explosion hurts the airframe badly but cannot, on its own, tear a healthy fuselage apart: parts fail first
       if (m.kind === 'fuselage') amt = Math.min(amt, m.max * 0.6);
       if (amt <= 0.2) continue;
@@ -256,7 +260,7 @@ export class Fighter implements Target, Attacker {
     f.mods.drag *= 1 + 0.12 * w;
     f.mods.thrust *= 1 - 0.04 * w;
     // AI pilots keep the older, gentler engine response: they fly the same fights, just not quite as punchy as the player
-    if (!this.isPlayer) f.mods.thrust *= 0.62;
+    if (!this.isPlayer) f.mods.thrust *= this.aiThrust;
   }
 
   /** Visuals for stores on pylons. */
@@ -289,14 +293,20 @@ export class Fighter implements Target, Attacker {
    */
   landingDamage(severity: number, belly: boolean, rough: boolean): void {
     if (this.state !== 'alive') return;
-    const amount = Math.min(0.85, Math.max(0.08, 0.1 + (severity - 0.9) * 0.45 + (belly ? 0.08 : 0) + (rough ? 0.06 : 0)));
+    const over = Math.max(0, severity - 1);
+    const amount = Math.min(0.8, 0.04 + over * 0.32 + (belly ? 0.1 : 0) + (rough ? 0.04 : 0));
     const hit = (id: string, k: number): DamageEvent[] => {
       const m = this.damage.get(id);
       return m.gone ? [] : this.damage.damage(m, m.max * amount * k);
     };
     const ev: DamageEvent[] = [];
-    // the gear goes first: it is what takes the impact (always, when it was a belly landing or a heavy one)
-    if (belly || severity > 1.15) ev.push(...this.damage.damage(this.damage.get('gear'), this.damage.get('gear').max * 2));
+    // the gear takes the impact, but only a belly landing or a truly savage touchdown tears it off: anything short of that
+    // weakens it (and a service puts it right), so an ordinary hard landing no longer leaves you without wheels
+    const gear = this.damage.get('gear');
+    if (!gear.gone) {
+      if (belly || severity > 1.9) ev.push(...this.damage.damage(gear, gear.max * 2));
+      else ev.push(...this.damage.damage(gear, gear.max * Math.min(0.6, 0.12 + over * 0.45)));
+    }
     ev.push(...hit('fuselage', 0.55));
     for (const e of this.damage.byKind('engine')) ev.push(...hit(e.id, belly ? 0.55 : 0.3));
     ev.push(...hit('wingL', 0.3), ...hit('wingR', 0.3), ...hit('fuel', 0.35));

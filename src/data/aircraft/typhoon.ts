@@ -15,6 +15,7 @@ export const TYPHOON: AircraftDef = {
   fullName: 'Eurofighter Typhoon',
   faction: 'west',
   role: 'Air-superiority fighter',
+  maneuver: 'jTurn',
   blurb: 'Big engines and an unstable canard delta. Accelerates hard, holds its speed through the turn and stays dangerous in a vertical fight.',
   flight: {
     stallSpeed: 51, maxSpeed: 650, twMil: 0.7, twAb: 1.18,

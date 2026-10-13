@@ -28,6 +28,8 @@ export class HangarScene {
   private distTarget = 30;
   private t = 0;
   autoRotate = true;
+  /** The title-screen presentation: a slow orbit, afterburner lit, gear up, no control animation. */
+  menu = false;
   private idle = 0;
 
   // pose options driven from the UI
@@ -117,11 +119,16 @@ export class HangarScene {
   update(dt: number): void {
     this.t += dt;
     this.idle += dt;
-    if (this.autoRotate && this.idle > 2.5) this.yaw += dt * 0.18;
+    const L = this.def?.model.length ?? 15;
+    if (this.menu) {
+      this.yaw += dt * 0.11;
+      this.pitch = 0.1 + Math.sin(this.t * 0.23) * 0.045;
+      this.distTarget = L * 2.1 + 4;
+    } else if (this.autoRotate && this.idle > 2.5) this.yaw += dt * 0.18;
     this.dist = damp(this.dist, this.distTarget, 6, dt);
 
-    const L = this.def?.model.length ?? 15;
-    const target = new Vector3(0, -0.2 + L * 0.02, 0);
+    // in the menu the jet sits in the band between the title and the buttons
+    const target = new Vector3(0, this.menu ? L * 0.13 : -0.2 + L * 0.02, 0);
     const cp = Math.cos(this.pitch);
     this.camera.position.set(
       target.x + Math.sin(this.yaw) * cp * this.dist,
@@ -133,10 +140,12 @@ export class HangarScene {
 
     if (this.model) {
       const t = this.t;
-      this.gear = damp(this.gear, this.gearDown ? 1 : 0, 3, dt);
-      this.ab = damp(this.ab, this.afterburner ? 1 : 0, 3, dt);
-      this.power = damp(this.power, this.afterburner ? 1 : 0.35, 3, dt);
-      const a = this.animate;
+      const gearWant = this.menu ? false : this.gearDown;
+      const abWant = this.menu ? true : this.afterburner;
+      this.gear = damp(this.gear, gearWant ? 1 : 0, 3, dt);
+      this.ab = damp(this.ab, abWant ? 1 : 0, 3, dt);
+      this.power = damp(this.power, abWant ? 1 : 0.35, 3, dt);
+      const a = this.menu ? false : this.animate;
       this.model.update(dt, {
         gearPos: this.gear, power: this.power, ab: this.ab,
         pitch: a ? Math.sin(t * 1.25) : 0, roll: a ? Math.sin(t * 0.85 + 1) : 0, yaw: a ? Math.sin(t * 0.6) * 0.8 : 0,

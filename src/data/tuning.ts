@@ -27,6 +27,11 @@ export const FLIGHT = {
   authorityStart: 0.4,
   authorityFull: 1.5,
 
+  // --- rudder (the keyboard pedals: A / D) -------------------------------------------------------------
+  /** rad/s of direct heading change at full pedal (on top of the difficulty's flat turn) and the extra yaw-rate gain. */
+  rudderTurn: 0.42,
+  rudderYawBoost: 0.9,
+
   // --- stability ("weathervane": nose wants to line up with the velocity vector) ---------
   stabilityPitch: 1.5,
   stabilityYaw: 1.8,
@@ -39,11 +44,13 @@ export const FLIGHT = {
   // --- drag ----------------------------------------------------------------------------
   /** Induced drag at max lift, as a multiple of parasitic drag. Bleeds energy in hard turns. */
   inducedDrag: 5,
-  gearDrag: 0.55,
+  /** Gear (and the landing flaps that go with it) down: a landing configuration that can actually be flown slow. */
+  gearDrag: 2.2,
   airbrakeDrag: 4.2,
 
   // --- engine ---------------------------------------------------------------------------
-  idleThrust: 0.06,
+  /** Fraction of military thrust at a closed throttle (low, so a jet can bleed speed on a descent). */
+  idleThrust: 0.03,
   spoolUp: 1.6, // throttle fraction per second (a closed throttle to full power in well under a second)
   spoolDown: 1.2,
   abSpool: 3.2,
@@ -67,9 +74,11 @@ export const FLIGHT = {
   /** Throttle closed on the ground: engine drag and light brake drag, in g, so a rollout always ends inside a runway. */
   idleRollFriction: 0.3,
   brakeFriction: 1.6,
-  groundSteer: 0.55, // rad/s of nosewheel steering
+  groundSteer: 0.85, // rad/s of nosewheel steering
+  /** Touchdown severity (1 = the limits of the difficulty) up to which a landing on a runway is still "good" and breaks nothing. */
+  firmLanding: 1.3,
   maxRotatePitch: 15 * Math.PI / 180,
-  runwayMargin: 14, // extra metres beyond the painted runway that still count as "on the runway"
+  runwayMargin: 24, // extra metres beyond the painted runway that still count as "on the runway"
   apronMargin: 70,
 };
 
@@ -135,5 +144,5 @@ export const TERRAIN_ASSIST = {
 };
 
 export const WORLD_BOUNDARY = {
-  countdown: 15,
+  countdown: 30,
 };

@@ -2,6 +2,8 @@
  * Data-driven aircraft definition. Adding an aircraft = adding one of these objects in /src/data/aircraft
  * and registering it in /src/data/aircraft/index.ts. Nothing else needs to change.
  */
+import type { ManeuverId } from '../flight/Maneuvers';
+
 export type Faction = 'west' | 'russia' | 'china';
 
 export interface FlightParams {
@@ -224,6 +226,8 @@ export interface AircraftDef {
   fullName: string;
   faction: Faction;
   role: string;
+  /** The one-button signature move this airframe is known for (see flight/Maneuvers). */
+  maneuver: ManeuverId;
   /** One or two lines for the hangar. */
   blurb: string;
   flight: FlightParams;

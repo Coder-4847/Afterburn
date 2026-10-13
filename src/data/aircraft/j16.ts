@@ -15,6 +15,7 @@ export const J16: AircraftDef = {
   fullName: 'J-16 Flanker',
   faction: 'china',
   role: 'Two-seat strike fighter',
+  maneuver: 'kulbit',
   blurb: 'A big, durable two-seater with lots of missile stations and wingtip ECM pods. Not the sharpest turner, but a heavy hitter that soaks damage.',
   flight: {
     stallSpeed: 60, maxSpeed: 640, twMil: 0.64, twAb: 1.05,

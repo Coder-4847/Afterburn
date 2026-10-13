@@ -4,6 +4,7 @@ import type { HangarScene } from '../render/HangarScene';
 import { PRESETS, payloadOf, type StationDef } from '../data/stations';
 import { STORES } from '../data/weapons';
 import { Loadout } from '../weapons/Loadout';
+import { MANEUVERS } from '../flight/Maneuvers';
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, parent?: HTMLElement, text?: string): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -156,6 +157,10 @@ export class HangarUI {
     el('h1', 'title', this.info, a.fullName);
     el('p', 'sub', this.info, a.role);
     el('p', 'hg-blurb', this.info, a.blurb);
+    const mv = MANEUVERS[a.maneuver];
+    const mp = el('p', 'hg-move', this.info);
+    el('b', '', mp, 'SIGNATURE MOVE  ·  ' + mv.name.toUpperCase());
+    mp.append(mv.blurb);
 
     const stats = el('div', 'hg-stats', this.info);
     for (const s of STATS) {

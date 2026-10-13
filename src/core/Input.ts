@@ -5,7 +5,7 @@ export type Action =
   | 'throttleUp' | 'throttleDown' | 'afterburner' | 'airbrake'
   | 'fireGun' | 'fireMissile' | 'cycleTarget' | 'lockTarget' | 'flares' | 'chaff'
   | 'weapon1' | 'weapon2' | 'weapon3' | 'weapon4' | 'targetCam' | 'scoreboard' | 'eject'
-  | 'gear' | 'camera' | 'map' | 'lookAround' | 'pause' | 'toggleFps';
+  | 'gear' | 'camera' | 'map' | 'lookAround' | 'pause' | 'toggleFps' | 'maneuver';
 
 /** Key codes are KeyboardEvent.code values; mouse buttons are 'Mouse0' (LMB), 'Mouse1' (MMB), 'Mouse2' (RMB). */
 export const DEFAULT_BINDINGS: Record<Action, string[]> = {
@@ -38,6 +38,7 @@ export const DEFAULT_BINDINGS: Record<Action, string[]> = {
   lookAround: ['KeyZ', 'Mouse1'],
   pause: ['Escape'],
   toggleFps: ['F3'],
+  maneuver: ['KeyR'],
 };
 
 export const ACTION_LABELS: Record<Action, string> = {
@@ -48,7 +49,7 @@ export const ACTION_LABELS: Record<Action, string> = {
   flares: 'Flares', chaff: 'Chaff',
   weapon1: 'Weapon 1', weapon2: 'Weapon 2', weapon3: 'Weapon 3', weapon4: 'Weapon 4', targetCam: 'Target view (hold)', scoreboard: 'Scoreboard (hold)', eject: 'Eject (hold)',
   gear: 'Landing gear', camera: 'Change camera', map: 'Map', lookAround: 'Look around (hold)',
-  pause: 'Pause', toggleFps: 'Show FPS',
+  pause: 'Pause', toggleFps: 'Show FPS', maneuver: 'Signature move',
 };
 
 /** Pretty-print a key code for the UI. */

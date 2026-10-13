@@ -15,6 +15,7 @@ export const F15C: AircraftDef = {
   fullName: 'F-15C Eagle',
   faction: 'west',
   role: 'Air-superiority fighter',
+  maneuver: 'hammerhead',
   blurb: 'Twin-engine muscle. Outruns and out-climbs almost everything and survives damage well, but it is big, loud on radar and turns wide.',
   flight: {
     stallSpeed: 60, maxSpeed: 700, twMil: 0.72, twAb: 1.22,

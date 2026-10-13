@@ -15,6 +15,7 @@ export const J10C: AircraftDef = {
   fullName: 'J-10C Vigorous Dragon',
   faction: 'china',
   role: 'Multirole fighter',
+  maneuver: 'immelmann',
   blurb: 'A nimble single-engine canard delta. Turns hard and climbs well for its size, but there is not much structure behind the skin.',
   flight: {
     stallSpeed: 49, maxSpeed: 600, twMil: 0.66, twAb: 1.08,

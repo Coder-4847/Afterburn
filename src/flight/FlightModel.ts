@@ -3,6 +3,7 @@ import type { AircraftDef } from '../aircraft/AircraftDef';
 import type { DifficultyDef } from '../data/difficulty';
 import { FLIGHT } from '../data/tuning';
 import { DEG, G0, clamp, damp, lerp, moveToward, smoothstep } from '../core/math';
+import { Pose, type ManeuverDef } from './Maneuvers';
 
 /** What the pilot (human or AI) asks for. Axes are -1..1; throttle 0..1. */
 export interface FlightInput {
@@ -13,10 +14,12 @@ export interface FlightInput {
   afterburner: boolean;
   airbrake: boolean;
   gearDown: boolean;
+  /** Pedals (keyboard rudder), -1..1: a stronger, direct yaw on top of `yaw`. */
+  rudder: number;
 }
 
 export function makeFlightInput(): FlightInput {
-  return { pitch: 0, roll: 0, yaw: 0, throttle: 0.75, afterburner: false, airbrake: false, gearDown: false };
+  return { pitch: 0, roll: 0, yaw: 0, throttle: 0.75, afterburner: false, airbrake: false, gearDown: false, rudder: 0 };
 }
 
 /** Multipliers the damage model (Phase 3) will drive. 1 = healthy. */
@@ -70,6 +73,17 @@ const _dq = new Quaternion();
 const _m = new Matrix4();
 const _surf: SurfaceInfo = { height: 0, onRunway: false, onApron: false };
 const DOWN = new Vector3(0, -1, 0);
+const _pose = new Pose();
+const _qn = new Quaternion();
+const _qp = new Quaternion();
+const _qd = new Quaternion();
+const _qo = new Quaternion();
+const _qt = new Quaternion();
+const _stick = [0, 0, 0];
+const WORLD_UP = new Vector3(0, 1, 0);
+
+/** Why a signature move could not start (null = it started). */
+export type ManeuverRefusal = 'busy' | 'ground' | 'cooldown' | 'slow' | 'fast' | 'low' | 'damaged';
 
 /**
  * Normalised lift curve: 1.0 at the stall angle, linear below it, a soft drop-off (not a cliff) above.
@@ -140,14 +154,44 @@ export class FlightModel {
   catapultStart = false;
   /** Seconds left of the automatic climb-out after a catapult launch (the game steers the nose up while it runs). */
   launchAssist = 0;
+  /** The signature move being flown (the nose follows its script and the controls are ignored), or null. */
+  maneuver: { def: ManeuverDef; t: number; q0: Quaternion; v0: number } | null = null;
+  /** Seconds until the next signature move may start. */
+  maneuverCool = 0;
+  /** True for one step when a move starts / ends (the game plays effects and re-centres the reticle). */
+  maneuverStart = false;
+  maneuverEnd = false;
 
   constructor(public def: AircraftDef, public difficulty: DifficultyDef) {}
+
+  /** Why a signature move cannot be started right now (null = it can). */
+  maneuverBlock(def: ManeuverDef): ManeuverRefusal | null {
+    if (this.maneuver) return 'busy';
+    if (this.crashed || this.wreck || this.grounded) return 'ground';
+    if (this.maneuverCool > 0) return 'cooldown';
+    if (this.speed < def.minSpeed) return 'slow';
+    if (this.speed > def.maxSpeed) return 'fast';
+    if (this.agl < def.minAgl) return 'low';
+    // a wing or the tail shot away: the airframe will not take it
+    if (this.mods.lift < 0.72 || this.mods.pitch < 0.7 || this.mods.thrust < 0.35) return 'damaged';
+    return null;
+  }
+
+  /** Try to begin a signature move. Returns why not, or null once it has started. */
+  startManeuver(def: ManeuverDef): ManeuverRefusal | null {
+    const why = this.maneuverBlock(def);
+    if (why) return why;
+    this.maneuver = { def, t: 0, q0: this.quat.clone(), v0: this.speed };
+    this.maneuverStart = true;
+    return null;
+  }
 
   reset(pos: Vector3, headingRad: number, speed: number, gearDown: boolean, throttle = 0.75): void {
     this.pos.copy(pos);
     this.quat.setFromAxisAngle(new Vector3(0, 1, 0), -headingRad);
     _fwd.set(0, 0, -1).applyQuaternion(this.quat);
     this.vel.copy(_fwd).multiplyScalar(speed);
+    this.speed = speed;
     this.prevPos.copy(this.pos);
     this.prevQuat.copy(this.quat);
     this.pitchRate = this.rollRate = this.yawRate = 0;
@@ -165,6 +209,10 @@ export class FlightModel {
     this.catapult = false;
     this.catapultStart = false;
     this.launchAssist = 0;
+    this.maneuver = null;
+    this.maneuverCool = 0;
+    this.maneuverStart = false;
+    this.maneuverEnd = false;
   }
 
   forward(out: Vector3): Vector3 { return out.set(0, 0, -1).applyQuaternion(this.quat); }
@@ -182,11 +230,18 @@ export class FlightModel {
     this.prevQuat.copy(this.quat);
     this.touchdown = false;
     this.impact = null;
-    if (this.crashed) return;
+    this.maneuverStart = false;
+    this.maneuverEnd = false;
+    if (this.crashed) {
+      this.maneuver = null;
+      return;
+    }
     if (this.wreck) {
+      this.maneuver = null;
       this.stepWreck(dt, env);
       return;
     }
+    if (this.maneuverCool > 0) this.maneuverCool = Math.max(0, this.maneuverCool - dt);
 
     const f = this.def.flight;
     const diff = this.difficulty;
@@ -227,6 +282,12 @@ export class FlightModel {
       const need = G0 / clamp(_up.y, 0.3, 1); // lift needed to hold altitude (more when banked)
       const perUnit = (G0 / (f.stallSpeed * f.stallSpeed)) * rho * diff.liftMul * mods.lift * Math.max(speed * speed, 400);
       this.trimAoa = Math.min(aStall * 0.8, aStall * (need / perUnit));
+    }
+
+    // a signature move replaces the control law for its duration
+    if (this.maneuver) {
+      this.stepManeuver(dt, c, env, speed);
+      return;
     }
 
     // ---- forces (all as accelerations, m/s^2) ----------------------------------------------
@@ -292,6 +353,12 @@ export class FlightModel {
       _dq.setFromAxisAngle(_up, flat);
       this.vel.applyQuaternion(_dq);
     }
+    // the pedals swing the flight path round directly: a firm rudder really does turn the jet
+    if (c.rudder !== 0 && !this.grounded) {
+      const turn = -c.rudder * FLIGHT.rudderTurn * smoothstep(vs, vs * 1.6, speed) * mods.yaw * dt;
+      _dq.setFromAxisAngle(_up, turn);
+      this.vel.applyQuaternion(_dq);
+    }
     this.pos.addScaledVector(this.vel, dt);
 
     // ---- rotation -------------------------------------------------------------------
@@ -313,7 +380,7 @@ export class FlightModel {
     const groundPitchGate = this.grounded ? smoothstep(vs * 0.6, vs * 1.0, speed) : 1;
     this.pitchRate = damp(this.pitchRate, pTarget * auth * mods.pitch * (c.pitch > 0 ? groundPitchGate : 1), FLIGHT.pitchResponse, dt);
     this.rollRate = damp(this.rollRate, c.roll * f.rollRate * auth * mods.roll + mods.rollDrift, FLIGHT.rollResponse, dt);
-    this.yawRate = damp(this.yawRate, c.yaw * f.yawRate * auth * mods.yaw, FLIGHT.yawResponse, dt);
+    this.yawRate = damp(this.yawRate, c.yaw * f.yawRate * (1 + FLIGHT.rudderYawBoost * Math.abs(c.rudder)) * auth * mods.yaw, FLIGHT.yawResponse, dt);
 
     // weathervane stability: with the stick centred the nose drifts toward the velocity vector
     const stabSpeed = 0.25 + 0.75 * smoothstep(0, vs * 1.5, speed);
@@ -353,6 +420,78 @@ export class FlightModel {
       this.quat.multiply(_dq).normalize();
     }
 
+    this.collide(dt, c, env);
+  }
+
+  /**
+   * One tick of a signature move. The attitude and the speed come from the move's script, and the velocity direction
+   * shares `track` of the nose's rotation (1 = a loop on rails, 0 = the nose swings, the flight path does not change).
+   */
+  private stepManeuver(dt: number, c: FlightInput, env: FlightEnv, speed: number): void {
+    const m = this.maneuver!;
+    const d = m.def;
+    m.t += dt;
+    const t = Math.min(m.t, d.duration);
+
+    // engine as scripted
+    const thr = d.thrust(t);
+    const ab = thr > 0.9;
+    this.power = moveToward(this.power, ab ? 1 : clamp(thr, 0.12, 0.9), (thr > this.power ? FLIGHT.spoolUp * 2 : FLIGHT.spoolDown * 2) * dt);
+    this.abLevel = moveToward(this.abLevel, ab && this.power > 0.8 ? 1 : 0, FLIGHT.abSpool * dt);
+
+    // attitude: the scripted pose, optionally eased toward "nose along the flight path, wings level" for the hand-back
+    _pose.start(m.q0);
+    d.pose(t, _pose);
+    _qn.copy(_pose.q);
+    const al = d.align ? d.align(t) : 0;
+    if (al > 0.001 && speed > 8) {
+      _vhat.copy(this.vel).multiplyScalar(1 / speed);
+      _right.crossVectors(_vhat, WORLD_UP);
+      if (_right.lengthSq() < 1e-4) this.rightVec(_right);
+      _right.normalize();
+      _up.crossVectors(_right, _vhat);
+      _tgt.copy(_vhat).negate();
+      _m.makeBasis(_right, _up, _tgt);
+      _qp.setFromRotationMatrix(_m);
+      _qn.slerp(_qp, al);
+    }
+    _qn.normalize();
+
+    // the velocity turns with the nose by `track`
+    _qd.copy(_qn).multiply(_qo.copy(this.quat).invert());
+    if (_qd.w < 0) { _qd.x = -_qd.x; _qd.y = -_qd.y; _qd.z = -_qd.z; _qd.w = -_qd.w; }
+    const track = d.track(t);
+    if (track > 0) {
+      _qt.set(0, 0, 0, 1).slerp(_qd, track);
+      this.vel.applyQuaternion(_qt);
+    }
+    const turn = (2 * Math.acos(Math.min(1, _qd.w))) / Math.max(dt, 1e-4);
+    this.quat.copy(_qn);
+
+    // speed follows the script (a floor keeps a hang from ever reversing the jet); the engine only drives sound and flame
+    this.forward(_fwd);
+    const entry = m.v0;
+    const want = Math.max(entry * d.speed(t), 26);
+    const cur = this.vel.length();
+    if (cur > 1e-3) this.vel.multiplyScalar(want / cur);
+    else this.vel.copy(_fwd).multiplyScalar(want);
+    this.pos.addScaledVector(this.vel, dt);
+    this.speed = want;
+
+    // load factor and control-surface animation
+    this.gLoad += (clamp(1 + (speed * turn * Math.max(track, 0.05)) / G0, -4, 12) - this.gLoad) * Math.min(1, dt * 8);
+    d.stick(t, _stick);
+    c.pitch = _stick[0];
+    c.roll = _stick[1];
+    c.yaw = _stick[2];
+    this.pitchRate = this.rollRate = this.yawRate = 0;
+    this.stallLevel = 0;
+
+    if (m.t >= d.duration) {
+      this.maneuver = null;
+      this.maneuverCool = d.cooldown;
+      this.maneuverEnd = true;
+    }
     this.collide(dt, c, env);
   }
 
@@ -399,7 +538,9 @@ export class FlightModel {
         const roll = Math.atan2(-this.rightVec(_right).y, _up.y);
         const sink = -this.vel.y;
         const lim = diff.landing;
-        const gearDown = this.gearPos > 0.85 && !this.mods.gearBroken;
+        // wheels count as down once they are most of the way (or still travelling down on a command to lower them): a gear
+        // that is a moment short of locked must not turn a good touchdown into a belly landing
+        const gearDown = !this.mods.gearBroken && (this.gearPos > 0.6 || (c.gearDown && this.gearPos > 0.3));
         const smooth = s.onRunway || s.onApron;
         if (s.height <= 0.01 && this.speed > 25) {
           this.crashed = 'Water';
@@ -408,17 +549,18 @@ export class FlightModel {
         // how far past the limits of a clean landing? 1 = exactly at them. Landings up to ~2.2 are survivable (with damage):
         // that is a crash landing. Beyond that the aircraft is lost.
         let sev = Math.max(sink / lim.sink, Math.abs(roll) / lim.roll, this.speed / lim.speed);
-        if (pitch < lim.pitchMin) sev = Math.max(sev, 1 + (lim.pitchMin - pitch) / 0.16);
-        if (pitch > lim.pitchMax) sev = Math.max(sev, 1 + (pitch - lim.pitchMax) / 0.22);
+        if (pitch < lim.pitchMin) sev = Math.max(sev, 1 + (lim.pitchMin - pitch) / 0.28);
+        if (pitch > lim.pitchMax) sev = Math.max(sev, 1 + (pitch - lim.pitchMax) / 0.3);
         if (!gearDown) sev = Math.max(sev * 1.25, 0.9);
-        if (!smooth) sev *= 1.45;
+        if (!smooth) sev *= 1.35;
         if (s.height <= 0.01) sev *= 2;
-        if (sev > 2.2) {
+        if (sev > 2.4) {
           this.crashed = s.height <= 0.01 ? 'Water' : !gearDown ? 'Crash landing' : smooth ? 'Hard landing' : 'Terrain';
           return;
         }
         this.grounded = true;
-        if (sev <= 1 && gearDown && smooth) this.touchdown = true;
+        // up to a quarter over the nominal limits is still a good (if firm) landing: nothing breaks
+        if (sev <= FLIGHT.firmLanding && gearDown && smooth) this.touchdown = true;
         else this.impact = { severity: sev, belly: !gearDown, rough: !smooth };
       }
       this.pos.y = s.height + gearH;

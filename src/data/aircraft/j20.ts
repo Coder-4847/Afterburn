@@ -15,6 +15,7 @@ export const J20: AircraftDef = {
   fullName: 'J-20 Mighty Dragon',
   faction: 'china',
   role: 'Stealth heavy fighter',
+  maneuver: 'splitS',
   blurb: 'A long-range canard-delta stealth fighter. Fast and hard to see, built for slashing attacks rather than long turning fights.',
   flight: {
     stallSpeed: 57, maxSpeed: 650, twMil: 0.7, twAb: 1.05,

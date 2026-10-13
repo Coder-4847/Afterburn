@@ -5,11 +5,11 @@ import { FROSTLINE } from './frostline';
 import { SANDSTORM } from './sandstorm';
 
 /**
- * The maps were authored at about 20 km across; with jets doing 200-300 m/s that is a long flight between fights. Every map is
- * shrunk to roughly half that: the terrain is the same shape squeezed, airstrips keep their real length, the spawn and the
- * boundary move in with it. (The Alps are squeezed less: steep valleys and walls get dangerous when compressed.)
+ * The maps are authored at about 20 km across. They were once squeezed to 0.55 of that (11 km) to keep fights close; they are
+ * now played at full authored size, 1.8x wider than that, so there is room to fly. Airstrips keep their real length. (The Alps
+ * were squeezed less because steep valleys get dangerous when compressed; they are 1.8x bigger too.)
  */
-export const WORLD_SCALE = 0.55;
+export const WORLD_SCALE = 1;
 
 function scaled(def: MapDef, s = WORLD_SCALE): MapDef {
   return {
@@ -22,7 +22,7 @@ function scaled(def: MapDef, s = WORLD_SCALE): MapDef {
   };
 }
 
-export const MAP_LIST: MapDef[] = [scaled(CORAL), scaled(SANDSTORM), scaled(FROSTLINE, 0.7), scaled(COBALT)];
+export const MAP_LIST: MapDef[] = [scaled(CORAL), scaled(SANDSTORM), scaled(FROSTLINE, 1.25), scaled(COBALT)];
 
 export const MAPS: Record<string, MapDef> = Object.fromEntries(MAP_LIST.map((m) => [m.id, m]));
 

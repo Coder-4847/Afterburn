@@ -53,6 +53,8 @@ export interface CombatHud {
   contacts: { pos: Vector3; dist: number; selected: boolean }[];
   /** Where the nearest enemy is, relative to our nose. */
   nearest: { name: string; dist: number; bearing: number; elevation: number } | null;
+  /** The airframe's signature move: its name, the key that flies it and whether it can be used now. */
+  maneuver: { name: string; key: string; state: 'ready' | 'cooling' | 'active' | 'blocked'; note: string };
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, parent?: HTMLElement, text?: string): HTMLElementTagNameMap[K] {
@@ -81,6 +83,8 @@ export class CombatHudLayer {
   private chaffV: HTMLElement;
   private fuelFill: HTMLElement;
   private fuelV: HTMLElement;
+  private moveName: HTMLElement;
+  private moveState: HTMLElement;
   private score: HTMLElement;
   private dmg: HTMLElement;
   private dmgRows: HTMLElement[] = [];
@@ -111,6 +115,9 @@ export class CombatHudLayer {
     const bar = el('div', 'wpn-bar', fr);
     this.fuelFill = el('i', '', bar);
     this.fuelV = el('b', '', fr, '');
+    const mr = el('div', 'wpn-row wpn-move', this.panel);
+    this.moveName = el('span', '', mr, '');
+    this.moveState = el('b', '', mr, '');
     this.score = el('div', 'hud-score', root);
     this.dmg = el('div', 'dmg-list', root);
     for (let i = 0; i < 4; i++) this.dmgRows.push(el('div', 'dmg-row', this.dmg));
@@ -132,7 +139,7 @@ export class CombatHudLayer {
     return _p.z < 1 && _p.z > -1;
   }
 
-  update(c: CanvasRenderingContext2D, d: CombatHud | null, cam: PerspectiveCamera, w: number, h: number, dt: number, scale = 1): void {
+  update(c: CanvasRenderingContext2D, d: CombatHud | null, cam: PerspectiveCamera, w: number, h: number, dt: number, scale = 1, cockpit = false): void {
     this.time += dt;
     if (!d) {
       this.panel.style.display = 'none';
@@ -141,7 +148,8 @@ export class CombatHudLayer {
       this.hurt.style.opacity = '0';
       return;
     }
-    this.panel.style.display = '';
+    // in the cockpit the weapon page, RWR and damage silhouette are on the instrument panel
+    this.panel.style.display = cockpit ? 'none' : '';
     this.score.style.display = '';
     this.feed.style.display = '';
 
@@ -164,6 +172,9 @@ export class CombatHudLayer {
     this.fuelFill.classList.toggle('low', d.bingo);
     this.set(this.fuelV, d.bingo ? 'BINGO' : Math.round(d.fuel * 100) + '%');
     this.fuelV.classList.toggle('low', d.bingo);
+    this.set(this.moveName, `[${d.maneuver.key}] ${d.maneuver.name.toUpperCase()}`);
+    this.set(this.moveState, d.maneuver.note);
+    this.moveState.className = d.maneuver.state === 'ready' ? 'ok' : d.maneuver.state === 'active' ? 'act' : 'wait';
     this.set(this.score, `KILLS ${d.kills}   DEATHS ${d.deaths}`);
     this.dmg.style.display = d.report.length ? '' : 'none';
     this.dmgRows.forEach((row, i) => {
@@ -197,8 +208,10 @@ export class CombatHudLayer {
     this.drawMarkers(c, d, w, h);
     this.drawNumbers(c, d, cam, w, h);
     this.drawMissileWarning(c, d, w, h);
-    this.drawRwr(c, d, w, h, scale);
-    this.drawSilhouette(c, d, w, h, scale);
+    if (!cockpit) {
+      this.drawRwr(c, d, w, h, scale);
+      this.drawSilhouette(c, d, w, h, scale);
+    }
     c.restore();
   }
 
@@ -378,14 +391,31 @@ export class CombatHudLayer {
   private drawPipper(c: CanvasRenderingContext2D, d: CombatHud, cam: PerspectiveCamera, w: number, h: number): void {
     const pt = { x: 0, y: 0 };
     if (d.lead && this.project(d.lead, cam, w, h, pt)) {
+      // lead-computing sight: a ring with a range arc that grows as the target closes (full circle = in the cannon's range)
       c.strokeStyle = P.amber;
       c.fillStyle = P.amber;
-      c.lineWidth = 1.6;
+      c.lineWidth = 1.2;
       c.beginPath();
-      c.arc(pt.x, pt.y, 9, 0, Math.PI * 2);
+      c.arc(pt.x, pt.y, 19, 0, Math.PI * 2);
+      c.stroke();
+      if (d.target) {
+        const k = clamp((1700 - d.target.dist) / 1300, 0.02, 1);
+        c.lineWidth = 3.2;
+        c.beginPath();
+        c.arc(pt.x, pt.y, 19, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * k);
+        c.stroke();
+      }
+      c.lineWidth = 1.4;
+      c.beginPath();
+      c.moveTo(pt.x - 28, pt.y);
+      c.lineTo(pt.x - 22, pt.y);
+      c.moveTo(pt.x + 22, pt.y);
+      c.lineTo(pt.x + 28, pt.y);
+      c.moveTo(pt.x, pt.y + 22);
+      c.lineTo(pt.x, pt.y + 28);
       c.stroke();
       c.beginPath();
-      c.arc(pt.x, pt.y, 1.8, 0, Math.PI * 2);
+      c.arc(pt.x, pt.y, 2.2, 0, Math.PI * 2);
       c.fill();
     }
     if (d.impact && this.project(d.impact, cam, w, h, pt)) {
@@ -550,7 +580,7 @@ export class CombatHudLayer {
     const bh = 118;
     const hw = Math.max(Math.abs(minX), Math.abs(maxX));
     const k = Math.min((bw - 16) / (hw * 2), (bh - 22) / (maxZ - minZ));
-    const x0 = Math.max(24, w * 0.04) + 86 * scale + bw / 2;
+    const x0 = Math.max(24, w * 0.04) + bw / 2;
     const y0 = h * 0.91 - bh;
     c.save();
     c.shadowBlur = 0;

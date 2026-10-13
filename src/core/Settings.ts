@@ -12,7 +12,7 @@ export type DroneMode = 'passive' | 'hostile';
 export type SortieMode = 'training' | 'freeflight' | 'tdm' | 'elimination' | 'carrier';
 /** Carrier strike: where you appear (and re-appear) after each sortie. */
 export type CarrierSpawn = 'deck' | 'air';
-export type AiSkillId = 'rookie' | 'regular' | 'ace';
+export type AiSkillId = 'rookie' | 'regular' | 'ace' | 'veteran' | 'elite';
 
 export interface Settings {
   version: number;
@@ -25,6 +25,8 @@ export interface Settings {
   timeOfDay: TimeOfDay;
   // controls
   mouseSensitivity: number;
+  /** Multiplier on the vertical mouse axis relative to the horizontal one. */
+  mouseSensitivityY: number;
   invertY: boolean;
   controlScheme: ControlScheme;
   /** action -> key codes; only overrides are stored here */
@@ -68,7 +70,7 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  version: 3,
+  version: 4,
   quality: 'auto',
   resolutionScale: 1,
   adaptiveResolution: true,
@@ -76,6 +78,7 @@ export const DEFAULT_SETTINGS: Settings = {
   showFps: false,
   timeOfDay: 'day',
   mouseSensitivity: 1,
+  mouseSensitivityY: 1,
   invertY: false,
   controlScheme: 'mouse-throttle-ws',
   bindings: {},
@@ -96,7 +99,7 @@ export const DEFAULT_SETTINGS: Settings = {
   teamSize: 2,
   scoreLimit: 20,
   timeLimit: 10,
-  aiSkill: 'rookie',
+  aiSkill: 'regular',
   musicVolume: 0.5,
   colorblind: false,
   reduceMotion: false,
@@ -129,8 +132,10 @@ export class SettingsStore {
           delete saved.teamSize;
           delete saved.aiSkill;
         }
+        // v4: two harder AI levels were added above Ace and every level got tougher; the old default (Rookie) moves up one
+        if ((saved.version ?? 1) < 4 && saved.aiSkill === 'rookie') saved.aiSkill = 'regular';
         Object.assign(this.value, saved);
-        this.value.version = 3;
+        this.value.version = 4;
       }
       // older saves called the AI mode "skirmish"
       if ((this.value.sortie as string) === 'skirmish') this.value.sortie = 'tdm';

@@ -52,7 +52,7 @@ export const DIFFICULTIES: Record<DifficultyId, DifficultyDef> = {
     lockSpeed: 2.2,
     autoCountermeasures: true,
     terrainAssist: 'auto',
-    landing: { sink: 12, roll: 40 * Math.PI / 180, speed: 175, pitchMin: -8 * Math.PI / 180, pitchMax: 24 * Math.PI / 180 },
+    landing: { sink: 14, roll: 45 * Math.PI / 180, speed: 200, pitchMin: -12 * Math.PI / 180, pitchMax: 28 * Math.PI / 180 },
   },
   standard: {
     id: 'standard',
@@ -71,7 +71,7 @@ export const DIFFICULTIES: Record<DifficultyId, DifficultyDef> = {
     lockSpeed: 1.4,
     autoCountermeasures: false,
     terrainAssist: 'warn',
-    landing: { sink: 8, roll: 25 * Math.PI / 180, speed: 145, pitchMin: -4 * Math.PI / 180, pitchMax: 20 * Math.PI / 180 },
+    landing: { sink: 10, roll: 32 * Math.PI / 180, speed: 170, pitchMin: -9 * Math.PI / 180, pitchMax: 24 * Math.PI / 180 },
   },
   realistic: {
     id: 'realistic',
@@ -90,6 +90,6 @@ export const DIFFICULTIES: Record<DifficultyId, DifficultyDef> = {
     lockSpeed: 1,
     autoCountermeasures: false,
     terrainAssist: 'warn',
-    landing: { sink: 4, roll: 12 * Math.PI / 180, speed: 110, pitchMin: 0, pitchMax: 15 * Math.PI / 180 },
+    landing: { sink: 6, roll: 18 * Math.PI / 180, speed: 140, pitchMin: -4 * Math.PI / 180, pitchMax: 18 * Math.PI / 180 },
   },
 };

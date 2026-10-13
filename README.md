@@ -5,7 +5,7 @@ module damage model, and a forgiving, fun feel. It is a fully static web app: no
 asset downloads. Terrain, aircraft, textures and audio are all generated in code, so the repository is
 self-contained and deploys straight to GitHub Pages.
 
-> **Status: version 1.0, all six phases complete.** 14 aircraft, three maps, AI pilots at three skill levels, Team Deathmatch from
+> **Status: version 1.0, all six phases complete.** 14 aircraft, three maps, AI pilots at five skill levels, Team Deathmatch from
 > 1v1 to 10v10, a training range and free flight, weapons with a module damage model, loadouts, a minimap, full key rebinding,
 > procedural audio and music, and accessibility options. Everything is generated in code: no downloads, no backend.
 
@@ -31,7 +31,8 @@ Mouse-aim is the default scheme: the mouse moves a reticle, and the aircraft ban
 | **Space** (hold) | Afterburner |
 | **B** (hold) | Airbrake / wheel brakes (Arcade also brakes by itself on the runway once the throttle is closed) |
 | **G** | Landing gear |
-| **A / D** | Rudder left / right (the reticle follows the nose, so there is no corrective roll) |
+| **R** | Signature move: every airframe has one (Cobra, Kvochur Bell, Kulbit, Immelmann, Split-S, Hammerhead, J-turn, Tail slide, Barrel roll). Needs speed and height, then a short cooldown |
+| **A / D** | Rudder left / right: a firm pedal turns the jet about 38 degrees per second even at low speed (the reticle follows the nose, so there is no corrective roll) |
 | **Q / E** | Manual roll (overrides the reticle while held) |
 | **Left mouse** (hold) | Cannon |
 | **Right mouse** | Fire the selected weapon (missile / bomb on click, rockets while held) |
@@ -43,12 +44,12 @@ Mouse-aim is the default scheme: the mouse moves a reticle, and the aircraft ban
 | **M** | Full-screen map (north-up) |
 | **P** (hold) | Scoreboard |
 | **J** (hold) | Eject |
-| **V** | Camera: chase / cockpit |
+| **V** | Camera: chase / cockpit (the cockpit has a full instrument panel: attitude, airspeed, altimeter, vertical speed, compass, warning lamps, a radar scope and a systems display) |
 | **Z** or **middle mouse** (hold) | Look around |
 | **F3** | FPS / render stats |
 | **Esc** | Pause, settings, respawn options |
 
-The other scheme (Settings > Controls) puts throttle back on Shift / Ctrl and W / S becomes manual pitch. Sensitivity, invert-Y, FOV, graphics quality,
+The other scheme (Settings > Controls) puts throttle back on Shift / Ctrl and W / S becomes manual pitch. Mouse sensitivity (0.1x to 5x) and a separate vertical sensitivity are the first two sliders in Settings. Invert-Y, FOV, graphics quality,
 difficulty and HUD options are all in the pause menu. Settings persist in `localStorage`.
 
 Every key above can be rebound: **Controls and key bindings** on the setup screen or the pause menu. Click a key, then press the new key or
@@ -154,8 +155,10 @@ Terrain is generated per map from a seed (`src/world/generators`: `archipelago`,
 **AI pilots** (`src/ai/Pilot.ts`) fly the same mouse-aim control law you do. They patrol, close to missile range and fire radar missiles
 (then turn 40 degrees off to keep the datalink), merge and dogfight with guns and IR missiles, break when someone is on their tail,
 beam the missile and use flares or chaff when one is inbound, avoid mountains by looking ahead, and return to an airstrip to rearm when
-hurt, low on fuel or out of weapons. Skill (**Rookie / Regular / Ace**) sets reaction time, aim error, gun and missile range, how often
-they fire and how well they use countermeasures. They share targets so a team spreads out instead of piling onto one jet.
+hurt, low on fuel or out of weapons. Skill (**Rookie / Regular / Ace / Veteran / Elite**) sets reaction time, aim error, gun and missile range, how often
+they fire, how well they use countermeasures, how much thrust they have, how hard they hit and how readily they close in for a gun
+kill. Missiles are fired from beyond about 1.3 to 1.8 km: inside that the cannon is the weapon, so the sharper pilots come to you.
+Ace and above throw their jet's signature move at a gun on their tail. They share targets so a team spreads out instead of piling onto one jet.
 
 **Rearm and repair:** stop on a friendly (Blue) runway or carrier deck (ten seconds to rearm, twenty to repair; you cannot be hurt while
 the crew works). AI pilots do this on a low pass over their own strip or carrier.

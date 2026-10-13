@@ -28,6 +28,8 @@ const GUNNERY: Record<AiSkillId, Gunnery> = {
   rookie: { spread: 0.03, damage: 3.2, gunCool: 3.4, samCool: 36, samRange: 4800, gunRange: 1900 },
   regular: { spread: 0.022, damage: 4, gunCool: 2.4, samCool: 26, samRange: 5600, gunRange: 2200 },
   ace: { spread: 0.015, damage: 5, gunCool: 1.7, samCool: 17, samRange: 6400, gunRange: 2500 },
+  veteran: { spread: 0.011, damage: 5.6, gunCool: 1.35, samCool: 13, samRange: 7000, gunRange: 2700 },
+  elite: { spread: 0.008, damage: 6.2, gunCool: 1.05, samCool: 10, samRange: 7600, gunRange: 2900 },
 };
 
 const _p = new Vector3();

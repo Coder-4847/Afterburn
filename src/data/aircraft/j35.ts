@@ -15,6 +15,7 @@ export const J35: AircraftDef = {
   fullName: 'J-35 Gyrfalcon',
   faction: 'china',
   role: 'Stealth multirole fighter',
+  maneuver: 'barrelRoll',
   blurb: 'A balanced twin-engine stealth design. No standout stat, but a low signature, good thrust and no real weakness.',
   flight: {
     stallSpeed: 55, maxSpeed: 620, twMil: 0.6, twAb: 1.0,

@@ -14,6 +14,8 @@ export interface MenuCallbacks {
   hangar(): void;
   /** Back to the mission setup screen from the pause menu. */
   setup(): void;
+  /** Leave whatever is running and go to the main menu. */
+  mainMenu(): void;
   aircraftName(): string;
   /** Called after any setting changes that needs a world rebuild (time of day). */
   changed(key: keyof Settings): void;
@@ -32,7 +34,7 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, parent?
 /** Keys the player can rebind, grouped. Pause (Esc) is fixed so a bad binding can never lock you out of the menu. */
 const BIND_GROUPS: { title: string; rows: Action[] }[] = [
   { title: 'Weapons', rows: ['fireGun', 'fireMissile', 'weapon1', 'weapon2', 'weapon3', 'weapon4', 'cycleTarget', 'lockTarget', 'flares', 'chaff', 'targetCam'] },
-  { title: 'Flight', rows: ['throttleUp', 'throttleDown', 'afterburner', 'airbrake', 'gear', 'pitchUp', 'pitchDown', 'rollLeft', 'rollRight', 'yawLeft', 'yawRight'] },
+  { title: 'Flight', rows: ['throttleUp', 'throttleDown', 'afterburner', 'airbrake', 'gear', 'maneuver', 'pitchUp', 'pitchDown', 'rollLeft', 'rollRight', 'yawLeft', 'yawRight'] },
   { title: 'View and interface', rows: ['camera', 'lookAround', 'map', 'scoreboard', 'eject', 'toggleFps'] },
 ];
 
@@ -124,6 +126,98 @@ export class Menus {
     }
   }
 
+  /** One line describing the current sortie: aircraft, mode, map and flight difficulty. */
+  private summary(): { aircraft: string; mode: string; map: string; diff: string } {
+    const s = this.settings.value;
+    const map = MAPS[mapIdFor(s.sortie, s.mapId)] ?? MAP_LIST[0];
+    return {
+      aircraft: this.cb.aircraftName(),
+      mode: (MODES.find((m) => m.id === s.sortie) ?? MODES[0]).name,
+      map: map.name,
+      diff: DIFFICULTIES[s.difficulty].label,
+    };
+  }
+
+  /** The main menu: the title over a live view of the selected jet, and the way into everything else. */
+  showMain(): void {
+    this.backTo = () => this.showMain();
+    const o = el('div', 'mm', this.clear());
+    el('div', 'mm-shade', o);
+    el('div', 'mm-grid', o);
+    const top = el('div', 'mm-top', o);
+    el('span', '', top, 'AFTERBURN  ·  FLIGHT OPERATIONS');
+    el('span', 'mm-blink', top, 'SORTIE READY');
+    const logo = el('div', 'mm-hero', o);
+    const word = el('h1', 'mm-logo', logo);
+    el('span', 'a', word, 'AFTER');
+    el('span', 'b', word, 'BURN');
+    el('div', 'mm-streak', logo);
+    el('p', 'mm-tag', logo, 'MODERN JET COMBAT  ·  14 AIRCRAFT  ·  4 THEATRES  ·  NO DOWNLOADS');
+
+    const bottom = el('div', 'mm-bottom', o);
+    const sum = this.summary();
+    const line = el('div', 'mm-sel', bottom);
+    el('b', '', line, sum.aircraft);
+    el('span', '', line, sum.mode);
+    el('span', '', line, sum.map);
+    el('span', '', line, sum.diff + ' flight model');
+    const nav = el('nav', 'mm-nav', bottom);
+    const item = (label: string, sub: string, fn: () => void, primary = false): HTMLButtonElement => {
+      const b = el('button', 'mm-btn' + (primary ? ' primary' : ''), nav);
+      el('b', '', b, label);
+      el('small', '', b, sub);
+      b.addEventListener('click', fn);
+      return b;
+    };
+    const fly = item('FLY', 'Launch the current mission', () => this.cb.start(), true);
+    item('MISSION', 'Mode, map, team, AI', () => this.showReady());
+    item('HANGAR', 'Aircraft and loadouts', () => this.cb.hangar());
+    item('SETTINGS', 'Graphics, sensitivity, audio', () => this.showSettings());
+    item('CONTROLS', 'Key bindings', () => this.showControls());
+    el('div', 'mm-foot', bottom, 'Mouse aims  ·  W / S throttle  ·  Space afterburner  ·  R signature move  ·  Esc pauses');
+    this.visible = true;
+    fly.focus();
+  }
+
+  /** After a mission has been (re)built: a short briefing card and the button that captures the mouse. */
+  showLaunch(): void {
+    this.backTo = () => this.showMain();
+    const o = el('div', 'mm', this.clear());
+    el('div', 'mm-shade', o);
+    el('div', 'mm-grid', o);
+    const top = el('div', 'mm-top', o);
+    el('span', '', top, 'AFTERBURN  ·  FLIGHT OPERATIONS');
+    el('span', 'mm-blink', top, 'READY FOR LAUNCH');
+    const c = el('div', 'mm-launch', o);
+    const sum = this.summary();
+    el('p', 'mm-kicker', c, 'MISSION LOADED');
+    el('h2', 'mm-launch-title', c, sum.mode);
+    el('p', 'mm-launch-sub', c, sum.map);
+    const rows = el('div', 'mm-rows', c);
+    const kv = (k: string, v: string) => {
+      const r = el('div', '', rows);
+      el('span', '', r, k);
+      el('b', '', r, v);
+    };
+    kv('AIRCRAFT', sum.aircraft);
+    kv('FLIGHT MODEL', sum.diff);
+    const s = this.settings.value;
+    if (s.sortie === 'tdm' || s.sortie === 'elimination' || s.sortie === 'carrier') kv('OPPOSITION', `${s.teamSize} v ${s.teamSize}  ·  ${SKILLS[s.aiSkill].label}`);
+    const go = el('button', 'mm-btn primary big', c);
+    el('b', '', go, 'CLICK TO FLY');
+    el('small', '', go, 'Captures the mouse. Esc pauses.');
+    go.addEventListener('click', () => this.cb.start());
+    const row = el('div', 'mm-row', c);
+    const a = el('button', 'mm-link', row, 'Mission setup');
+    a.addEventListener('click', () => this.showReady());
+    const b = el('button', 'mm-link', row, 'Hangar');
+    b.addEventListener('click', () => this.cb.hangar());
+    const m = el('button', 'mm-link', row, 'Main menu');
+    m.addEventListener('click', () => this.showMain());
+    this.visible = true;
+    go.focus();
+  }
+
   showReady(): void {
     this.backTo = () => this.showReady();
     const o = el('div', 'overlay solid', this.clear());
@@ -163,7 +257,7 @@ export class Menus {
         p, 'Time limit', 'timeLimit', [[0, 'None'], [5, '5 minutes'], [10, '10 minutes'], [15, '15 minutes']].map(([n, t]) => [String(n), String(t)]), undefined,
         s.sortie === 'elimination' ? 'When it runs out: more pilots left wins, then more lives' : s.sortie === 'carrier' ? 'When it runs out: the carrier in better shape wins' : undefined,
       );
-      this.select(p, 'AI skill', 'aiSkill', Object.entries(SKILLS).map(([id, k]) => [id, k.label]), undefined, 'Reaction time, aim, countermeasure use');
+      this.select(p, 'AI skill', 'aiSkill', Object.entries(SKILLS).map(([id, k]) => [id, k.label]), undefined, 'Reaction time, aim, aggression, countermeasures. Veteran and Elite also fly their signature moves and hit harder');
     } else if (s.sortie === 'training') {
       el('div', 'section', p, 'Range');
       this.select(p, 'Red drones', 'drones', [['passive', 'Passive (evade only)'], ['hostile', 'Hostile (they shoot back)']], undefined, 'Hostile drones hunt you with guns and missiles');
@@ -184,6 +278,8 @@ export class Menus {
     st.addEventListener('click', () => this.showSettings());
     const ct = el('button', 'btn', row, 'Controls and key bindings');
     ct.addEventListener('click', () => this.showControls());
+    const mm = el('button', 'btn', row, 'Main menu');
+    mm.addEventListener('click', () => this.showMain());
     el('div', 'footer', p, 'Esc pauses. Your mouse is captured while flying. Hold P for the scoreboard, M for the map.');
     this.visible = true;
   }
@@ -209,6 +305,7 @@ export class Menus {
     if (s.sortie === 'carrier') mk('Launch from your carrier', 'Catapult launch: throttle up and hold the brakes off', () => this.cb.respawnCarrier());
     mk('Start on the runway', 'Takeoff practice: throttle up, hold Space, pull up at ~270 km/h', () => this.cb.respawnRunway());
     mk('Mission setup', 'Change mode, map or team size (leaves the current match)', () => this.cb.setup());
+    mk('Main menu', 'Leave the current match', () => this.cb.mainMenu());
     mk('Hangar', `Now flying: ${this.cb.aircraftName()}. Changing aircraft respawns you.`, () => this.cb.hangar());
     mk('Settings', 'Graphics, audio, assists', () => this.showSettings());
     mk('Controls', 'Key bindings', () => this.showControls());
@@ -317,6 +414,8 @@ export class Menus {
     setup.addEventListener('click', () => this.cb.setup());
     const hg = el('button', 'btn', row, 'Hangar');
     hg.addEventListener('click', () => this.cb.hangar());
+    const mm = el('button', 'btn', row, 'Main menu');
+    mm.addEventListener('click', () => this.cb.mainMenu());
     this.visible = true;
   }
 
@@ -327,6 +426,14 @@ export class Menus {
     const p = el('div', 'panel wide', o);
     el('p', 'brand', p, 'AFTERBURN');
     el('h1', 'title', p, 'Settings');
+
+    el('div', 'section', p, 'Controls');
+    this.slider(p, 'Mouse sensitivity', 'mouseSensitivity', 0.1, 5, 0.05, (v) => v.toFixed(2) + 'x', 'How far the aim reticle moves per mouse count. 1.00x is the default; lower for precision, higher for fast turns');
+    this.slider(p, 'Vertical sensitivity', 'mouseSensitivityY', 0.3, 2, 0.05, (v) => v.toFixed(2) + 'x', 'Pitch axis relative to the horizontal one');
+    this.toggle(p, 'Invert Y axis', 'invertY');
+    this.select(p, 'Control scheme', 'controlScheme', [['mouse-throttle-ws', 'W/S throttle, A/D rudder, Q/E roll'], ['mouse', 'Shift/Ctrl throttle, W/S manual pitch']]);
+    this.slider(p, 'Camera distance', 'cameraDistance', 0.4, 1.5, 0.05, (v) => Math.round(v * 100) + '%', 'Closer makes the jet look bigger');
+    this.toggle(p, 'Camera shake', 'cameraShake');
 
     el('div', 'section', p, 'Graphics');
     this.select(p, 'Quality', 'quality', [['auto', 'Auto-detect'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High'], ['ultra', 'Ultra']] as [QualitySetting, string][], () => this.cb.changed('quality'));
@@ -340,13 +447,6 @@ export class Menus {
     this.select(p, 'Difficulty', 'difficulty', Object.values(DIFFICULTIES).map((d) => [d.id as DifficultyId, d.label]), () => this.cb.changed('difficulty'), DIFFICULTIES[this.settings.value.difficulty].description);
     this.select(p, 'Terrain avoidance', 'terrainAssist', [['auto', 'Warning + auto pull-up'], ['warn', 'Warning only'], ['off', 'Off']], undefined, 'The PULL UP warning and optional auto-recover');
     this.select(p, 'Speed units', 'speedUnit', [['kmh', 'km/h'], ['kt', 'knots'], ['ms', 'm/s']]);
-
-    el('div', 'section', p, 'Controls');
-    this.slider(p, 'Mouse sensitivity', 'mouseSensitivity', 0.2, 3, 0.05, (v) => v.toFixed(2));
-    this.toggle(p, 'Invert Y axis', 'invertY');
-    this.select(p, 'Control scheme', 'controlScheme', [['mouse-throttle-ws', 'W/S throttle, A/D rudder, Q/E roll'], ['mouse', 'Shift/Ctrl throttle, W/S manual pitch']]);
-    this.slider(p, 'Camera distance', 'cameraDistance', 0.4, 1.5, 0.05, (v) => Math.round(v * 100) + '%', 'Closer makes the jet look bigger');
-    this.toggle(p, 'Camera shake', 'cameraShake');
 
     el('div', 'section', p, 'Combat');
     this.select(p, 'Red drones', 'drones', [['passive', 'Passive (evade only)'], ['hostile', 'Hostile (they shoot back)']], undefined, 'Hostile drones hunt you with guns and missiles');
@@ -453,6 +553,11 @@ export class Menus {
 
   /** Change the label of the main button (used when the browser refuses mouse capture). */
   flashPrimary(text: string): void {
+    const big = this.layer.querySelector('.mm-btn.primary b');
+    if (big) {
+      big.textContent = text;
+      return;
+    }
     const b = this.layer.querySelector('.btn.primary');
     if (b) b.textContent = text;
   }

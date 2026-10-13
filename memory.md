@@ -5,7 +5,7 @@ code. It records what the game is, how the code is organised, every system's cur
 work, how to test things in this environment, what has been done, and what is still open. If you change something significant,
 update the relevant section (and the "Change log" at the bottom) before you finish.
 
-Last updated: 2026-10-10, after commit `f37c3fd` (pushed, detail-geometry pass). Change 11 (acceleration) is in the working tree until committed.
+Last updated: 2026-10-13, after changes 12-16 (landing fix, signature moves, five AI levels, realistic HUD, title screen, cockpit, rudder, bigger maps), committed and pushed on user request.
 
 ---
 
@@ -110,6 +110,7 @@ Everything is rebindable in the Controls screen (Esc is fixed). Defaults from `c
 | Space (hold) | afterburner |
 | B (hold) | airbrake / wheel brakes |
 | G | landing gear |
+| R | Signature move (per airframe, see 5.12) |
 | A / D | rudder (the reticle follows the nose, so no corrective roll) |
 | Q / E | manual roll |
 | LMB (hold) / RMB | cannon / fire selected weapon (rockets while held) |
@@ -144,12 +145,18 @@ and each aircraft's `flight` block.
   auto terrain pull-up), `standard` (damageTaken 0.7), `realistic` ("Realistic-lite", damageTaken 1, no assists). Each has landing
   tolerances (sink/roll/speed/pitch).
 - Terrain assist: warn at 5.5 s, auto pull-up at 2.6 s (Arcade), suppressed while landing.
-- World boundary: leaving the combat zone starts a 15 s countdown, then you crash. **AI gets the same rule** (`PilotBrain.outT`, 15 s beyond the boundary -> `crashFighter(f, 'Left combat zone')`).
+- World boundary: leaving the combat zone starts a **30 s** countdown (`WORLD_BOUNDARY.countdown`), then you crash. **AI gets the same rule** (`PilotBrain.outT`, same countdown -> `crashFighter(f, 'Left combat zone')`).
+- **Rudder (change 16):** the A / D pedals feed `FlightInput.rudder` on top of `yaw`: `FLIGHT.rudderTurn 0.42` rad/s direct path turn (authority-scaled) and `rudderYawBoost 0.9` on the yaw rate, `groundSteer 0.85`. Measured at 160 m/s: 40 -> 76 degrees of heading in 2 s of full pedal.
+- **Mouse sensitivity:** `mouseSensitivity` (0.1-5x) and `mouseSensitivityY` (0.3-2x, vertical multiplier) in Settings, first two rows.
+
+### 5.12 Signature moves (flight/Maneuvers.ts)
+One key (`maneuver`, default R) flies the airframe's scripted move: `AircraftDef.maneuver` is one of `cobra` (F-22, F/A-18E, Su-27), `bell` (Su-57), `kulbit` (Su-35S, J-16), `immelmann` (F-16C, J-10C), `splitS` (J-20), `hammerhead` (F-15C), `jTurn` (Typhoon), `tailslide` (MiG-29), `barrelRoll` (Rafale, J-35). A `ManeuverDef` is data: `pose(t, Pose)` (pitch/roll/yaw chain relative to the entry attitude), `speed(t)` (multiple of entry speed, floored at 26 m/s), `track(t)` (how much of the nose rotation the velocity direction follows: 1 = loop on rails, 0 = nose swings only), `thrust(t)` (flame/sound only), `stick(t)` (control-surface animation), `align(t)` (blend the nose to the flight path for a clean hand-back), plus entry limits `minSpeed/maxSpeed/minAgl` and `cooldown`. `FlightModel.startManeuver/maneuverBlock/stepManeuver` replace the control law while it runs (`maneuver`, `maneuverCool`, `maneuverEnd`); Game skips the control law, re-centres the reticle on the nose and shows `[R] NAME READY/TOO SLOW/n s` in the weapon panel. Velocity direction uses incremental rotations: scripts whose nose returns to the start must use track 0 (or exactly 1), a fractional track on a net-nonzero rotation leaves a residual heading error. AI pilots at skill `maneuver` > 0 start it when a gun is within 800 m behind them (`Pilot.fight`, defend branch). Measured: cobra 155 -> 90 m/s min, +17 m; bell 189 -> 28 m/s hang -> 117 m/s dive-out; reversal moves end heading -180.
 
 ### 5.2 Ground, landing, service
 - Rolling friction `0.06 g`; **`idleRollFriction 0.3 g`** when the throttle is closed on the ground (so rollouts stop inside a
   runway); **`brakeFriction 1.6 g`** with the brake held (x1.2 on Arcade); Arcade also auto-brakes with throttle closed.
   Measured: 75 m/s rollout stops in about 150-175 m braking, about 1 km coasting on Standard.
+- **Landing fix (change 12):** the acceleration change had left jets unable to slow down (idle thrust beat drag, 115-140 m/s on a 3.5 degree glideslope) so every touchdown exceeded the limits and the old rule "severity > 1.15 destroys the gear" fired. Now: `gearDrag 2.2` (landing configuration), `idleThrust 0.03`, wider difficulty limits (arcade sink 14, standard 10, realistic 6 m/s), `FLIGHT.firmLanding 1.3` (a runway touchdown up to 1.3x the limits is still "good" and breaks nothing), wheels count as down at gearPos > 0.6 (or > 0.3 while commanded down), runway margins +24 m wide / +70 m long, gear is only torn off by a belly landing or severity > 1.9 (otherwise "weakened", repaired on service), crash at severity > 2.4. Arcade auto-lowers the gear when low, slow, descending and within 1.8 km of a strip or active deck. `Game.distToStrip()` includes carrier decks (auto gear-up and terrain assist used to ignore them).
 - Landings are **graded**, not pass/fail: within limits = good landing; past them but survivable = crash landing with damage (gear
   breaks first); gear-up belly landing on a runway or wheels-down on open ground is survivable; water or a truly violent impact
   destroys the aircraft. Rough ground friction and lift dump apply. A broken gear cannot be lowered again.
@@ -176,7 +183,7 @@ wings/tail can be ripped off (rip events hide the model part), pilot can be kill
 
 ### 5.5 AI (ai/Pilot.ts)
 `PilotBrain` modes: `patrol, bvr, wvr, defend, evade, rtb, strike`. Same `MouseAim` law as the player. Skills (`SKILLS`):
-rookie (reaction 1.5 s, aimErr 0.032, missileCool 55 s, cm 0.35, bvr 4500 m), regular, ace. **Arena keeping** (`edgePressure` / `bendInward`): pressure 0..1 rises as the distance left along the heading to a safe square (0.8 x boundary) shrinks below ~2 turn radii (R = v^2 / (8 g x air density x damage factor)); whatever the goal the heading is bent toward the middle, evade picks the beam side that keeps it in, terrain-ray scoring penalises rays that leave the arena, and the arena wins over terrain avoidance unless the ground is < 5 s away. Above 0.4 pressure the pilot pulls full stick. Before this fix a bug in the "never dive" clamp (`max(_d.y, 0)` above 700 m AGL) stopped AI ever commanding a descent, so fights drifted up to 6-7 km where the air is too thin to turn. Measured over 4-minute fights on all maps: time outside the boundary fell from 25-40% of jet-seconds (max 2.5x boundary) to ~1% (max ~1.3x, only crippled jets). Avoids terrain with ray fans, keeps
+five levels (change 13): rookie, regular, ace, **veteran, elite** (reaction 1.1 -> 0.1 s, aimErr 0.026 -> 0.0016, missileCool 50 -> 26 s, thrust 0.68 -> 1.06 (was a flat 0.62), aggression 0.5 -> 1.0, damage dealt x1 -> x1.6, aim assist 0.45 -> 1, signature-move use 0 -> 0.85). `Fighter.damageOut` / `Fighter.aiThrust` carry the skill. Gun-fight bias: missiles only beyond `900 + 900 x aggression` m (so the cannon is the weapon inside ~1.3-1.8 km), one missile in flight per target for aggression > 0.7, crank shortened, lag pursuit only for the cautious, longer bursts, a wider firing cone under 450 m, the player is a preferred target, damaged pilots stay in the fight longer. Measured vs a harmless weaving target (3 min, 3 AI): fraction of time inside 1.2 km 23% (rookie) -> 34% (ace and up); gun hits on the target 7 -> 85-124. Default AI skill is now regular; settings v4 moves a saved `rookie` to `regular`. **Arena keeping** (`edgePressure` / `bendInward`): pressure 0..1 rises as the distance left along the heading to a safe square (0.8 x boundary) shrinks below ~2 turn radii (R = v^2 / (8 g x air density x damage factor)); whatever the goal the heading is bent toward the middle, evade picks the beam side that keeps it in, terrain-ray scoring penalises rays that leave the arena, and the arena wins over terrain avoidance unless the ground is < 5 s away. Above 0.4 pressure the pilot pulls full stick. Before this fix a bug in the "never dive" clamp (`max(_d.y, 0)` above 700 m AGL) stopped AI ever commanding a descent, so fights drifted up to 6-7 km where the air is too thin to turn. Measured over 4-minute fights on all maps: time outside the boundary fell from 25-40% of jet-seconds (max 2.5x boundary) to ~1% (max ~1.3x, only crippled jets). Avoids terrain with ray fans, keeps
 level turns when the goal is behind (prevents vertical spirals), shares targets, RTBs to a strip/carrier (a low pass within 900 m
 services instantly, then `rtbBlock` 45 s). **Strike role** (carrier mode): `strikeGoal` returns the enemy carrier; the pilot fights
 only enemies within 1300 m (2400 m if that enemy is targeting it), otherwise flies a bombing run: low and straight, computes the
@@ -220,7 +227,7 @@ Team size default 2, AI skill default rookie, time limit default 10 min, difficu
 - If the fleet cannot be built the sortie runs as TDM with a note on the briefing (Game.briefNote).
 
 ### 5.8 Maps (data/maps)
-Authored at about 20 km then scaled by `WORLD_SCALE 0.55` (Frostline 0.7) in `maps/index.ts` so fights are close. Seeds make terrain
+Played at the authored size: `WORLD_SCALE 1` (Frostline 1.25) in `maps/index.ts`, i.e. about 1.8x wider than the 0.55 / 0.7 of earlier rounds (Coral 20.5 km, boundary 9.6 km; Cobalt 26 km; Frostline 25.6 km, boundary 12 km). `TERRAIN_RES` is 1281 (16-25 m cells; load 0.3-1.6 s). Seeds make terrain
 reproducible; generators: `archipelago`, `desert`, `alpine` (`world/generators`).
 - `coral` Coral Archipelago: tropical islands, Blue west / Red east, six airstrips, central volcano. Default map.
 - `sandstorm` Sandstorm Basin: desert, mesas, haze, no sea (`groundPlane`).
@@ -248,8 +255,7 @@ water). Verified: zero lamps over water on all Coral strips.
 - Post chain (bloom, MSAA, tone mapping), shadows, LOD terrain streaming, procedural clouds/sky/water, particles for smoke/fire/trails.
   Quality presets `low/medium/high/ultra` + `auto` (detected from the GPU); adaptive resolution trims render scale if frames sag.
 - Procedural WebAudio engine/lock tone/RWR/missile alarm + generated music (menu theme vs flight theme with intensity).
-- HUD: speed/alt, pitch ladder, heading tape, flight path marker, weapon panel, target box, damage silhouette, RWR, kill feed, damage
-  numbers, service countdown, match bar, briefing card (22 s at sortie start). Minimap (heading-up, 16 km detection radius) and full
+- HUD (change 14, `ui/Hud.ts`): a combiner-glass style flight HUD in phosphor green, all canvas: heading scale with caret and boxed digital heading (plus a marker for the nearest strip), speed tape (units per setting) with Mach / G / alpha stack and a throttle column, altitude tape with radar altitude, VS and fuel, gear lights, bank arc, 5-degree pitch ladder with a gapped horizon bar, waterline, flight path marker with an AoA bracket on approach (on-speed 8.5 deg), and a landing cue (sink rate vs the difficulty limit, FLARE prompt). The combat layer keeps its colours: target box, lead-computing pipper with a range arc, RWR, damage silhouette, weapon panel with a signature-move row. Weapon, kill feed, damage list, match bar, service countdown and briefing card are unchanged. Minimap (heading-up, 16 km detection radius) and full
   map (M). Scoreboard (hold P). Results screen with Rematch / Mission setup / Hangar.
 - Accessibility: colour-blind palette, reduce motion, HUD scale, high-contrast HUD.
 - Settings persist in `localStorage` key `afterburn.settings.v1` (settings version 3; missing fields fall back to defaults).
@@ -317,7 +323,12 @@ importing and appending it in `index.ts`.
    device-pixel crop (top-left), so use `camera.setViewOffset(W, H, W/6, H/6, W, H)` on `g.hangar.camera` and wait ~1 s before a screenshot.
 
 10. **Detail-geometry pass** (`f37c3fd`): see 5.9 "Model pass 2". Triggered by feedback that the jets still read as tubes and pancakes.
-11. **Acceleration** (uncommitted): faster spool, bigger thrust, thrust fade near top speed, lighter store penalty; see 5.1.
+11. **Acceleration** (`c6768ee`): faster spool, bigger thrust, thrust fade near top speed, lighter store penalty; see 5.1.
+12. **Landing fix**: see 5.2. Gear no longer destroyed by ordinary landings.
+13. **AI ladder**: five skill levels, stronger and more gun-oriented AI, see 5.5.
+14. **Realistic HUD**: see 5.10.
+15. **Signature moves**: R key, nine scripted moves, see 5.12.
+16. **UI / cockpit / maps round** (2026-10-13): title screen (`Menus.showMain`, `showLaunch`, `HangarScene.menu` showroom backdrop, state `ready` renders the hangar scene), full cockpit instrument panel (`ui/Cockpit.ts`: ADI, ASI, altimeter, VSI, compass, lamps, radar scope, systems page; HUD tapes move up in cockpit view), stronger rudder, vertical sensitivity slider, maps 1.8x wider, 30 s outside the combat zone.
 
 ---
 

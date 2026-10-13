@@ -15,6 +15,7 @@ export const MIG29: AircraftDef = {
   fullName: 'MiG-29 Fulcrum',
   faction: 'russia',
   role: 'Point-defence fighter',
+  maneuver: 'tailslide',
   blurb: 'Small, snappy and cheap. Its big strakes and high alpha give it a vicious first turn, but it bleeds energy and has little margin for error.',
   flight: {
     stallSpeed: 55, maxSpeed: 640, twMil: 0.65, twAb: 1.15,

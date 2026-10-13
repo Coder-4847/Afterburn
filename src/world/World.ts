@@ -22,7 +22,7 @@ const _u = new Vector3();
 const _fwd = new Vector3();
 const _loc = { u: 0, v: 0 };
 
-export const TERRAIN_RES = 1025;
+export const TERRAIN_RES = 1281;
 
 export interface Deck {
   x: number;

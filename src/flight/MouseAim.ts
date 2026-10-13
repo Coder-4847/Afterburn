@@ -38,10 +38,10 @@ export class MouseAim {
   }
 
   /** Rotate the aim about the camera's up/right axes by a mouse delta, then keep it within range of the nose. */
-  addMouse(dx: number, dy: number, camRight: Vector3, camUp: Vector3, sens: number, invertY: boolean): void {
+  addMouse(dx: number, dy: number, camRight: Vector3, camUp: Vector3, sens: number, invertY: boolean, sensY = 1): void {
     const k = AIM.radiansPerCount * sens;
     if (dx !== 0) this.aim.applyAxisAngle(camUp, -dx * k);
-    if (dy !== 0) this.aim.applyAxisAngle(camRight, -dy * k * (invertY ? -1 : 1));
+    if (dy !== 0) this.aim.applyAxisAngle(camRight, -dy * k * sensY * (invertY ? -1 : 1));
     this.aim.normalize();
   }
 

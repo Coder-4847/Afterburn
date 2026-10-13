@@ -16,6 +16,7 @@ export const F16C: AircraftDef = {
   fullName: 'F-16C Fighting Falcon',
   faction: 'west',
   role: 'Multirole fighter',
+  maneuver: 'immelmann',
   blurb: 'The benchmark light fighter. Superb roll and low-speed manoeuvrability, forgiving to fly, but fragile and short on thrust.',
   flight: {
     stallSpeed: 54, maxSpeed: 580, twMil: 0.62, twAb: 1.08,

@@ -374,7 +374,7 @@ export class Combat implements FighterHooks {
           _v4.y += 0.5 * GRAVITY * t * t;
           _v4.normalize();
           // only help when we are already pointing roughly at it
-          if (_v4.dot(_v1) > Math.cos(6 * DEG)) assistDir = _v4;
+          if (_v4.dot(_v1) > Math.cos((6 + 7 * (f.isPlayer ? 0 : f.aimAssist)) * DEG)) assistDir = _v4;
         }
       }
     }
