@@ -19,7 +19,7 @@ no accounts, and **no asset downloads**. Terrain, aircraft, textures, audio and 
 - Remote: https://github.com/Coder-4847/Afterburn.git, branch `master`
 - Live: https://coder-4847.github.io/Afterburn/ (GitHub Pages, deployed by `.github/workflows/deploy.yml` on every push to `main`/`master`)
 - Git user: Ettan Bansal (`bansalettan@gmail.com`)
-- Status: v1.0.0 feature set (6 phases) plus five feedback rounds, all committed and pushed. Latest commit `f71fc67`.
+- Status: v1.0.0 feature set (6 phases) plus feedback rounds up to change 16, all committed and pushed. Latest commit `20c7338` (Pages deploy for it completed with success; the live JS bundle matched the local build).
 
 ### Scripts
 
@@ -58,7 +58,7 @@ public/                          (empty of required assets; an optional public/m
 src/
   main.ts                        boots Game; in dev installs devtools and exposes window.afterburn
   core/   Game.ts (orchestrator, ~1900 lines)  Input.ts  Settings.ts  Emitter.ts  math.ts  devtools.ts
-  flight/ FlightModel.ts  MouseAim.ts  TerrainAssist.ts
+  flight/ FlightModel.ts  MouseAim.ts  TerrainAssist.ts  Maneuvers.ts (signature moves)
   aircraft/ AircraftDef.ts  Aircraft.ts  ProceduralJet.ts  Materials.ts  Afterburner.ts  Trails.ts  ModelLoader.ts
   weapons/ Combat.ts  Fighter.ts  WeaponSystem.ts  Loadout.ts  Targets.ts  types.ts
   damage/  DamageModel.ts
@@ -67,7 +67,7 @@ src/
   modes/   Match.ts
   world/   World.ts  Terrain.ts  Heightmap.ts  Airstrip.ts  Water.ts  Sky.ts  Clouds.ts  NoiseTexture.ts  noise.ts  generators/
   render/  GameRenderer.ts  CameraRig.ts  HangarScene.ts  Particles.ts  PostFX.ts  quality.ts
-  ui/      Hud.ts  CombatHud.ts  Menus.ts  Hangar.ts  Minimap.ts  Scoreboard.ts  palette.ts  style.css
+  ui/      Hud.ts  Cockpit.ts (cockpit instrument panel)  CombatHud.ts  Menus.ts (title screen, setup, pause, settings)  Hangar.ts  Minimap.ts  Scoreboard.ts  palette.ts  style.css
   audio/   Audio.ts (procedural WebAudio)  Music.ts (procedural score)
   data/    tuning.ts  difficulty.ts  weapons.ts  stations.ts  aircraft/*.ts (14 + index)  maps/*.ts (4 + index + types)
 ```
@@ -120,7 +120,7 @@ Everything is rebindable in the Controls screen (Esc is fixed). Defaults from `c
 | F / C | flares / chaff |
 | X (hold) | target camera |
 | J (hold ~0.9 s) | eject |
-| V | chase/cockpit camera; Z or MMB (hold) look around |
+| V | chase/cockpit camera (cockpit has the instrument panel, 5.10); Z or MMB (hold) look around |
 | M / P (hold) | full map / scoreboard; F3 FPS |
 | Esc | pause |
 
@@ -136,7 +136,7 @@ and each aircraft's `flight` block.
 ### 5.1 Flight and control
 - Fixed step 1/60 s, `maxSubSteps` 5. Atmosphere: density scale height 9500 m, floor 0.45, thrust ~ density^0.7.
 - Soft stall (never spins; nose falls through), weathervane stability, authority scales with airspeed vs stall speed.
-- Drag: `inducedDrag 5`, `gearDrag 0.55`, **`airbrakeDrag 4.2`** (was 1.6).
+- Drag: `inducedDrag 5`, **`gearDrag 2.2`** (was 0.55; landing configuration, see 5.2), **`airbrakeDrag 4.2`** (was 1.6). `idleThrust 0.03` (was 0.06).
 - **Acceleration (change 11)**: `FLIGHT.thrustScale 1.7` multiplies every jet's T/W; parasitic drag is only `parasiticShare 0.4` of AB thrust at top speed and thrust fades as `1 - (1-share) * (v/vmax)^8`, while induced / gear / brake / sideslip drags are divided by (share x scale) so they keep their old absolute size. Engine spool `spoolUp 1.6`, `spoolDown 1.2`, `abSpool 3.2`, AB engages above 80% power. Store penalty on a full load is now 12% drag / 4% thrust (was 22% / 7%). Measured (full external load): rotation speed in 3.5-5.5 s (was 7-10 s); 200 m/s to 80% of top speed in 19-24 s (90% never reached in 4 min before); 150 m/s from idle to 300 m/s in 9-13 s (was 16-26 s). **AI jets get thrust x0.62** (`Fighter.prePhysics`) so their speeds and turn radii stay as before and the arena logic still holds.
 - Mouse aim: `AIM.radiansPerCount 0.0021`, reticle max offset 40 deg. Dynamic bank cap (`bankRef 0.6, bankExp 0.8, bankMin 0.14`),
   `errDecay 0.45`, `rollScale 0.7`, `yawSuppress 0.2`. This was tuned over two feedback rounds: small corrections must not
@@ -198,7 +198,7 @@ third AI (`index % 3 === 1`, or the only AI on its side).
 - `carrier` **Carrier Strike** (see 5.7).
 - `training`: balloons, a ground-target site, three drones (passive evade, or hostile via setting).
 - `freeflight`: empty sky.
-Team size default 2, AI skill default rookie, time limit default 10 min, difficulty default arcade, aircraft default F-16C.
+Team size default 2, AI skill default regular (settings v4 moved a saved rookie to regular), time limit default 10 min, difficulty default arcade, aircraft default F-16C.
 
 ### 5.7 Carrier Strike
 - **Own map: Cobalt Sea** (`data/maps/cobalt.ts`, `exclusive: 'carrier'`). Always used for this mode; the map picker is replaced by
@@ -207,7 +207,7 @@ Team size default 2, AI skill default rookie, time limit default 10 min, difficu
   surfaced, missiles). Fleet placement: `Fleet.build()` finds open water near +/-0.42 x boundary, picks a carrier heading with
   open water ahead/behind (`openHeading`), puts escorts on clear water, and patrols small circles (radius 110-220 m) where there
   is room, else sits on station.
-- Defences scale with AI skill (`GUNNERY` in Fleet.ts): rookie samCool 36 s, regular 26 s, ace 17 s; gun bursts at the nearest
+- Defences scale with AI skill (`GUNNERY` in Fleet.ts): rookie samCool 36 s, regular 26 s, ace 17 s, veteran 13 s, elite 10 s; gun bursts at the nearest
   enemy aircraft; SAMs not stacked on an aircraft that already has one inbound; first SAM delay 3-10 s. A pass at 180 m through
   the fleet cost 3-9% health in tests.
 - **Deck**: a rectangle (`World.decks`, `Deck` interface) that `surfaceAt` returns as a runway at deck height. A sunk carrier's deck
@@ -256,9 +256,11 @@ water). Verified: zero lamps over water on all Coral strips.
   Quality presets `low/medium/high/ultra` + `auto` (detected from the GPU); adaptive resolution trims render scale if frames sag.
 - Procedural WebAudio engine/lock tone/RWR/missile alarm + generated music (menu theme vs flight theme with intensity).
 - HUD (change 14, `ui/Hud.ts`): a combiner-glass style flight HUD in phosphor green, all canvas: heading scale with caret and boxed digital heading (plus a marker for the nearest strip), speed tape (units per setting) with Mach / G / alpha stack and a throttle column, altitude tape with radar altitude, VS and fuel, gear lights, bank arc, 5-degree pitch ladder with a gapped horizon bar, waterline, flight path marker with an AoA bracket on approach (on-speed 8.5 deg), and a landing cue (sink rate vs the difficulty limit, FLARE prompt). The combat layer keeps its colours: target box, lead-computing pipper with a range arc, RWR, damage silhouette, weapon panel with a signature-move row. Weapon, kill feed, damage list, match bar, service countdown and briefing card are unchanged. Minimap (heading-up, 16 km detection radius) and full
-  map (M). Scoreboard (hold P). Results screen with Rematch / Mission setup / Hangar.
+  map (M). Scoreboard (hold P). Results screen with Rematch / Mission setup / Hangar / Main menu.
+- **Title screen** (change 16): `Menus.showMain()` is what the game opens on (state `ready`): AFTER/BURN logo, tagline, a one-line summary of aircraft / mode / map / flight model, and FLY / MISSION / HANGAR / SETTINGS / CONTROLS. `Menus.showLaunch()` is the "mission loaded, click to fly" card shown after `rebuild()`; `showReady()` is the old mission-setup panel (kept, reached from MISSION). While state is `ready` or `hangar` the canvas shows `HangarScene` (`menu = true`: slow orbit, AB lit, gear up, jet in the band between title and buttons; `Game.menuBackdrop()` sets it). Pause and results have a Main menu entry (`Game.toMainMenu()` sets `builtSig = ''` so the next FLY rebuilds). FLY with a matching sortie captures the mouse at once; a changed sortie rebuilds and asks for one more click (the pointer-lock gesture would have expired).
+- **Cockpit view** (change 16, `ui/Cockpit.ts`, drawn only when `rig.mode === 'cockpit'`): canopy rails and bow, raised dashboard, ADI (pitch and bank), airspeed dial with stall arc, altimeter (two hands plus digits), VSI (+-30 m/s), compass card with a bug to the nearest strip, ten warning lamps, a 12 km heading-up radar scope with contacts and missile warnings, and a systems page (weapon groups, gun / flares / chaff, fuel, THR / RPM bars, control-position box, damage silhouette, signature-move status). In cockpit view the DOM weapon panel, RWR and silhouette are hidden (the panel replaces them), the HUD tapes sit higher (`Hud.tapeCy/tapeH`) and `body.cockpit-view` lifts the damage list and messages. Layout unit is `min(h, w / 1.55) * 1.12`.
 - Accessibility: colour-blind palette, reduce motion, HUD scale, high-contrast HUD.
-- Settings persist in `localStorage` key `afterburn.settings.v1` (settings version 3; missing fields fall back to defaults).
+- Settings persist in `localStorage` key `afterburn.settings.v1` (settings version 4; missing fields fall back to defaults).
 
 ### 5.11 Aircraft roster (14)
 West: F-22, F-16C (default), F/A-18E, F-15C, Rafale C, Typhoon. Russia: Su-57, Su-35S, Su-27, MiG-29. China: J-20, J-10C, J-16, J-35.
@@ -289,6 +291,9 @@ importing and appending it in `index.ts`.
 - Useful checks already scripted before: stopping distances (brake on/off per difficulty), catapult launch timeline per
   difficulty, deck landing/arrestor, carrier win flow (`rc.take(99999, g.fighter, 'Mk 82')`), 3-5 min AI strike simulations at all
   skills, lamps-over-water count per strip, draw calls via `renderer.gl.info.render`.
+
+- **Browser pane visibility:** requestAnimationFrame only runs while the pane is visible (a hidden pane makes `innerWidth` 0 and the sim stands still, though `debug.step(n)` still works). `preview_start` with a `url` re-opens it; after an HMR reload the game is back on the title screen, so call `g.debug.enterPlay()` and `g.debug.setup(...)` again. The screenshot is 800 px wide in device pixels (DPR 1-2), so a 1280x720 viewport is captured whole only when the DPR is 1.
+- Dev helpers used this round: `g.signatureMove()` (private, reachable), `g.kb.yaw = 1` then `g.debug.step(n)` for rudder tests, `g.rebuild()` after changing `mapId` / `sortie` / `aiSkill`, `g.combat.removeFighter(g.fighter)` plus `g.skirmish.build(a, b)` for AI-only benches, `g.applySetting('difficulty', true)` after `settings.set('difficulty')`.
 
 ### Environment gotchas
 - Shell is Git Bash on Windows. **Bash heredocs with backticks/quotes mangle edits and `python` hangs.** Write multi-line edit scripts
@@ -342,9 +347,10 @@ importing and appending it in `index.ts`.
 - The carrier catapult run points toward the central island chain on Cobalt Sea (about 2.3 km of clear water ahead); if it feels
   tight, nudge the carrier sites or the middle island in `cobalt.ts`.
 - No multiplayer, no persistence beyond settings and loadouts, no campaign.
-- Deploy status: the Pages run for `f71fc67` completed with success. To check any later push:
-  `curl -s "https://api.github.com/repos/Coder-4847/Afterburn/actions/runs?per_page=2"` (the `gh` CLI is not installed here).
-- `memory.md` itself and change 9 are uncommitted until the user asks for a commit.
+- Deploy status: the Pages run for `20c7338` completed with success and the live site served the new bundle. To check any later push:
+  `curl -s "https://api.github.com/repos/Coder-4847/Afterburn/actions/runs?per_page=2"` (the `gh` CLI is not installed here), then compare the `assets/index-*.js` name in `curl -s https://coder-4847.github.io/Afterburn/` with `dist/assets`.
+- Not yet judged by a human playtest (change 16 and 12-15 were verified by scripted sims and screenshots): rudder strength, Elite difficulty, landing forgiveness, the 1.8x maps, and how the cockpit panel sits on very wide or very narrow windows.
+- Ideas: draw the cockpit stick and throttle, give the menu a map preview, restyle the mission-setup page, and make the AI use signature moves offensively.
 
 ---
 
