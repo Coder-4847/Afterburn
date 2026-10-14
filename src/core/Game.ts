@@ -102,6 +102,8 @@ export class Game {
   state: GameState = 'loading';
   private acc = 0;
   private alpha = 0;
+  /** Which side the cinematic signature-move camera swings to (flips with every move). */
+  private cineSide = 1;
   private lastTime = 0;
   private fpsEl: HTMLElement;
   private fpsAccum = 0;
@@ -896,7 +898,7 @@ export class Game {
   private renderFrame(dt: number): void {
     const p = this.player;
     p.syncVisual(this.alpha, dt);
-    p.model.root.visible = this.rig.mode !== 'cockpit' || this.crashed; // cockpit-lite: no airframe in view
+    p.model.root.visible = this.rig.mode !== 'cockpit' || this.crashed || this.rig.cineW > 0.02; // cockpit-lite: no airframe in view
     if (this.state === 'playing') this.rig.update(dt, this.rigTarget(), this.groundAt);
     this.combat.render(this.alpha);
     this.range.render(this.alpha, dt, this.quality.trails);
@@ -939,6 +941,7 @@ export class Game {
     const p = this.viewAircraft();
     const def = p.def;
     const cf = cameraFor(def);
+    const cam = MANEUVERS[def.maneuver].cam;
     return {
       pos: p.object.position,
       quat: p.object.quaternion,
@@ -947,6 +950,7 @@ export class Game {
       distance: cf.distance * this.settings.value.cameraDistance,
       height: cf.height * (0.6 + 0.4 * this.settings.value.cameraDistance),
       cockpit: cf.cockpit,
+      cine: { active: !!p.flight.maneuver, vel: p.flight.vel, side: this.cineSide, dist: cam.dist, azim: cam.azim, fov: cam.fov },
     };
   }
 
@@ -1015,9 +1019,11 @@ export class Game {
     const why = f.startManeuver(def);
     if (!why) {
       this.say(name, 1.8);
-      this.rig.addShake(0.45);
+      this.cineSide = -this.cineSide; // the shot swings to alternate sides
+      this.rig.addShake(0.3);
       this.audio.whoosh(f.pos);
       this.recovering = false;
+      this.pullUp = 0;
       this.aim.snapTo(f);
       return;
     }
@@ -1841,7 +1847,7 @@ export class Game {
       pitch: Math.asin(clamp(_fwd.y, -1, 1)),
       gearPos: f.gearPos,
       grounded: f.grounded,
-      stall: !f.grounded && f.speed < f.stallSpeedNow * 1.05 || f.stallLevel > 0.15,
+      stall: !f.maneuver && (!f.grounded && f.speed < f.stallSpeedNow * 1.05 || f.stallLevel > 0.15),
       pullUp: this.pullUp,
       boundaryCountdown: this.outside ? this.boundaryTimer : null,
       message: msg,
@@ -1850,7 +1856,7 @@ export class Game {
       velocity: sp,
       origin: p.object.position,
       nearestStrip: dNear < 7000 ? { name: near.def.name, dist: dNear, bearing: Math.atan2(near.def.x - f.pos.x, -(near.def.z - f.pos.z)) } : null,
-      cameraMode: this.rig.mode,
+      cameraMode: this.rig.cineW > 0.25 ? 'chase' : this.rig.mode,
       visible: true,
       glare: this.settings.value.reduceMotion ? null : this.sunGlare(),
       veil: this.world.cloudInside,

@@ -80,6 +80,8 @@ const _qd = new Quaternion();
 const _qo = new Quaternion();
 const _qt = new Quaternion();
 const _stick = [0, 0, 0];
+const _vold = new Vector3();
+const ease01 = (x: number): number => { const k = Math.min(1, Math.max(0, x)); return k * k * (3 - 2 * k); };
 const WORLD_UP = new Vector3(0, 1, 0);
 
 /** Why a signature move could not start (null = it started). */
@@ -155,7 +157,7 @@ export class FlightModel {
   /** Seconds left of the automatic climb-out after a catapult launch (the game steers the nose up while it runs). */
   launchAssist = 0;
   /** The signature move being flown (the nose follows its script and the controls are ignored), or null. */
-  maneuver: { def: ManeuverDef; t: number; q0: Quaternion; v0: number } | null = null;
+  maneuver: { def: ManeuverDef; t: number; q0: Quaternion; qL: Quaternion; qPrev: Quaternion; dir0: Vector3; v0: number } | null = null;
   /** Seconds until the next signature move may start. */
   maneuverCool = 0;
   /** True for one step when a move starts / ends (the game plays effects and re-centres the reticle). */
@@ -181,7 +183,18 @@ export class FlightModel {
   startManeuver(def: ManeuverDef): ManeuverRefusal | null {
     const why = this.maneuverBlock(def);
     if (why) return why;
-    this.maneuver = { def, t: 0, q0: this.quat.clone(), v0: this.speed };
+    // the wings-level twin of the entry attitude (same nose direction), which pitch moves roll out onto
+    this.forward(_fwd);
+    const qL = this.quat.clone();
+    if (def.level && Math.abs(_fwd.y) < 0.97) {
+      _right.crossVectors(_fwd, WORLD_UP).normalize();
+      _up.crossVectors(_right, _fwd);
+      _tgt.copy(_fwd).negate();
+      _m.makeBasis(_right, _up, _tgt);
+      qL.setFromRotationMatrix(_m);
+    }
+    const dir0 = this.speed > 5 ? this.vel.clone().multiplyScalar(1 / this.speed) : _fwd.clone();
+    this.maneuver = { def, t: 0, q0: this.quat.clone(), qL, qPrev: this.quat.clone(), dir0, v0: this.speed };
     this.maneuverStart = true;
     return null;
   }
@@ -439,47 +452,58 @@ export class FlightModel {
     this.power = moveToward(this.power, ab ? 1 : clamp(thr, 0.12, 0.9), (thr > this.power ? FLIGHT.spoolUp * 2 : FLIGHT.spoolDown * 2) * dt);
     this.abLevel = moveToward(this.abLevel, ab && this.power > 0.8 ? 1 : 0, FLIGHT.abSpool * dt);
 
-    // attitude: the scripted pose, optionally eased toward "nose along the flight path, wings level" for the hand-back
-    _pose.start(m.q0);
+    // attitude: the scripted pose (built on the entry attitude, rolled level for the pitch moves), optionally eased toward
+    // "nose along the flight path, wings level" for the hand-back
+    if (d.level) _qo.slerpQuaternions(m.q0, m.qL, ease01(t / 0.45));
+    else _qo.copy(m.q0);
+    _pose.start(_qo);
     d.pose(t, _pose);
-    _qn.copy(_pose.q);
+    _qn.copy(_pose.q).normalize();
+    if (_qn.dot(this.quat) < 0) { _qn.x = -_qn.x; _qn.y = -_qn.y; _qn.z = -_qn.z; _qn.w = -_qn.w; }
+
+    // the velocity direction: an explicit flight-path curve, or the scripted pose's own rotation shared out by `track`.
+    // (Taken from the pose before any hand-back easing, so the easing can never feed back into the flight path.)
+    _vold.copy(this.vel);
+    if (d.path) {
+      _right.set(1, 0, 0).applyQuaternion(m.qL);
+      _qt.setFromAxisAngle(_right, d.path(t));
+      this.vel.copy(m.dir0).applyQuaternion(_qt);
+    } else {
+      _qd.copy(_qn).multiply(_qo.copy(m.qPrev).invert());
+      if (_qd.w < 0) { _qd.x = -_qd.x; _qd.y = -_qd.y; _qd.z = -_qd.z; _qd.w = -_qd.w; }
+      const track = d.track(t);
+      if (track > 0) {
+        _qt.set(0, 0, 0, 1).slerp(_qd, track);
+        this.vel.applyQuaternion(_qt);
+      }
+    }
+    m.qPrev.copy(_qn);
+    this.vel.normalize();
+
     const al = d.align ? d.align(t) : 0;
     if (al > 0.001 && speed > 8) {
-      _vhat.copy(this.vel).multiplyScalar(1 / speed);
-      _right.crossVectors(_vhat, WORLD_UP);
+      _right.crossVectors(this.vel, WORLD_UP);
       if (_right.lengthSq() < 1e-4) this.rightVec(_right);
       _right.normalize();
-      _up.crossVectors(_right, _vhat);
-      _tgt.copy(_vhat).negate();
+      _up.crossVectors(_right, this.vel);
+      _tgt.copy(this.vel).negate();
       _m.makeBasis(_right, _up, _tgt);
       _qp.setFromRotationMatrix(_m);
-      _qn.slerp(_qp, al);
+      if (_qp.dot(_qn) < 0) { _qp.x = -_qp.x; _qp.y = -_qp.y; _qp.z = -_qp.z; _qp.w = -_qp.w; }
+      _qn.slerp(_qp, al).normalize();
     }
-    _qn.normalize();
-
-    // the velocity turns with the nose by `track`
-    _qd.copy(_qn).multiply(_qo.copy(this.quat).invert());
-    if (_qd.w < 0) { _qd.x = -_qd.x; _qd.y = -_qd.y; _qd.z = -_qd.z; _qd.w = -_qd.w; }
-    const track = d.track(t);
-    if (track > 0) {
-      _qt.set(0, 0, 0, 1).slerp(_qd, track);
-      this.vel.applyQuaternion(_qt);
-    }
-    const turn = (2 * Math.acos(Math.min(1, _qd.w))) / Math.max(dt, 1e-4);
     this.quat.copy(_qn);
 
     // speed follows the script (a floor keeps a hang from ever reversing the jet); the engine only drives sound and flame
     this.forward(_fwd);
-    const entry = m.v0;
-    const want = Math.max(entry * d.speed(t), 26);
-    const cur = this.vel.length();
-    if (cur > 1e-3) this.vel.multiplyScalar(want / cur);
-    else this.vel.copy(_fwd).multiplyScalar(want);
+    const want = Math.max(m.v0 * d.speed(t), 26);
+    this.vel.multiplyScalar(want);
     this.pos.addScaledVector(this.vel, dt);
     this.speed = want;
 
-    // load factor and control-surface animation
-    this.gLoad += (clamp(1 + (speed * turn * Math.max(track, 0.05)) / G0, -4, 12) - this.gLoad) * Math.min(1, dt * 8);
+    // load factor from the real bend of the flight path (a hang or a nose swing at constant velocity pulls nothing)
+    const bend = _vold.lengthSq() > 1 ? _vold.angleTo(this.vel) / Math.max(dt, 1e-4) : 0;
+    this.gLoad += (clamp(1 + (want * bend) / G0, -4, 12) - this.gLoad) * Math.min(1, dt * 8);
     d.stick(t, _stick);
     c.pitch = _stick[0];
     c.roll = _stick[1];
