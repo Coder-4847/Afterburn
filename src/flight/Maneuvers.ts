@@ -56,6 +56,9 @@ export interface ManeuverDef {
   minSpeed: number;
   maxSpeed: number;
   minAgl: number;
+  /** Extra height (m) needed per m/s of entry speed above `aglKnee`: the fast half-loops are wider. */
+  aglSlope?: number;
+  aglKnee?: number;
   /** Seconds before it can be used again. */
   cooldown: number;
   /** The attitude, built relative to the start attitude. */
@@ -81,6 +84,9 @@ export interface ManeuverDef {
   cam: { dist: number; azim: number; fov: number };
 }
 
+/** The height above ground this move needs at an entry speed. */
+export const aglNeeded = (d: ManeuverDef, speed: number): number => d.minAgl + (d.aglSlope ?? 0) * Math.max(0, speed - (d.aglKnee ?? 0));
+
 const seg = (t: number, a: number, b: number): number => clamp((t - a) / (b - a), 0, 1);
 const ease = (x: number): number => x * x * (3 - 2 * x);
 const hold = (t: number, a: number, b: number): number => (t >= a && t <= b ? 1 : 0);
@@ -92,7 +98,7 @@ export const MANEUVERS: Record<ManeuverId, ManeuverDef> = {
   // The nose snaps up past the vertical, hangs there while the air brakes the jet, then drops back onto the flight path.
   cobra: {
     id: 'cobra', name: 'Cobra', blurb: 'Pugachev\'s Cobra: the nose snaps past vertical, the jet hangs and bleeds speed, then drops back. Anything behind you overshoots.',
-    duration: 3.0, minSpeed: 95, maxSpeed: 420, minAgl: 140, cooldown: 7,
+    duration: 3.0, minSpeed: 95, maxSpeed: 450, minAgl: 140, cooldown: 7,
     level: true, cam: { dist: 1.7, azim: 1.15, fov: 8 },
     pose(t, p) {
       const up = ease(seg(t, 0.04, 0.7));
@@ -110,7 +116,7 @@ export const MANEUVERS: Record<ManeuverId, ManeuverDef> = {
   // in a dive. The velocity follows an explicit flight-path curve and the nose is eased onto it at the end, so it hands back clean.
   bell: {
     id: 'bell', name: 'Kvochur Bell', blurb: 'Kvochur\'s Bell: a zoom to near-zero airspeed, a hang, then the jet swings its nose over like a bell and falls out in a dive.',
-    duration: 5.6, minSpeed: 110, maxSpeed: 340, minAgl: 800, cooldown: 12,
+    duration: 5.6, minSpeed: 100, maxSpeed: 450, minAgl: 500, cooldown: 12,
     level: true, cam: { dist: 1.75, azim: 1.1, fov: 10 },
     pose(t, p) {
       const up = ease(seg(t, 0, 1.4));
@@ -129,7 +135,7 @@ export const MANEUVERS: Record<ManeuverId, ManeuverDef> = {
   // A flat somersault: the nose goes all the way round in pitch while the jet keeps flying forward.
   kulbit: {
     id: 'kulbit', name: 'Kulbit', blurb: 'A flat somersault: 360 degrees of pitch with the jet still moving forward. Pure showmanship, and a free gun pass if you are lucky.',
-    duration: 3.4, minSpeed: 90, maxSpeed: 390, minAgl: 340, cooldown: 9,
+    duration: 3.4, minSpeed: 90, maxSpeed: 450, minAgl: 280, cooldown: 9,
     level: true, cam: { dist: 1.7, azim: 1.1, fov: 8 },
     pose(t, p) {
       p.pitch(360 * DEG * ease(seg(t, 0.15, 3.0)));
@@ -143,8 +149,8 @@ export const MANEUVERS: Record<ManeuverId, ManeuverDef> = {
   // Half loop up and over, then a half roll: the textbook reversal, an exchange of speed for height.
   immelmann: {
     id: 'immelmann', name: 'Immelmann', blurb: 'A half loop and a half roll: you leave heading the other way, higher and slower, on top of whoever was behind you.',
-    duration: 4.0, minSpeed: 130, maxSpeed: 520, minAgl: 300, cooldown: 8,
-    cam: { dist: 1.8, azim: 0.7, fov: 8 },
+    duration: 4.0, minSpeed: 120, maxSpeed: 520, minAgl: 260, cooldown: 8,
+    level: true, cam: { dist: 1.8, azim: 0.7, fov: 8 },
     pose(t, p) {
       p.pitch(180 * DEG * ease(seg(t, 0, 2.5)));
       p.roll(180 * DEG * ease(seg(t, 2.35, 3.6)));
@@ -159,13 +165,13 @@ export const MANEUVERS: Record<ManeuverId, ManeuverDef> = {
   // Roll inverted, then pull through: the fast, hard reversal and escape downhill.
   splitS: {
     id: 'splitS', name: 'Split-S', blurb: 'Roll inverted and pull through: a half loop toward the ground that reverses you and trades height for speed.',
-    duration: 3.8, minSpeed: 100, maxSpeed: 520, minAgl: 800, cooldown: 8,
+    duration: 3.8, minSpeed: 90, maxSpeed: 450, minAgl: 560, aglSlope: 1.8, aglKnee: 200, cooldown: 8,
     cam: { dist: 1.8, azim: 0.7, fov: 8 },
     pose(t, p) {
       p.roll(180 * DEG * ease(seg(t, 0, 0.8)));
       p.pitch(180 * DEG * ease(seg(t, 0.7, 3.2)));
     },
-    speed: (t) => 1 + 0.3 * ease(seg(t, 0.7, 3.2)),
+    speed: (t) => 1 + 0.12 * ease(seg(t, 0.7, 3.2)),
     track: (t) => (t < 0.7 ? 0 : t < 3.2 ? 1 : 0),
     thrust: () => 1,
     stick: (t, o) => { o[0] = hold(t, 0.7, 3.2); o[1] = hold(t, 0, 0.8); o[2] = 0; },
@@ -175,7 +181,7 @@ export const MANEUVERS: Record<ManeuverId, ManeuverDef> = {
   // Zoom to the vertical, pivot on the spot, fall back through the way you came: a stall turn.
   hammerhead: {
     id: 'hammerhead', name: 'Hammerhead', blurb: 'A stall turn: straight up until the speed is gone, a pivot about the nose, and a dive back down the other way.',
-    duration: 5.0, minSpeed: 140, maxSpeed: 430, minAgl: 560, cooldown: 11,
+    duration: 5.0, minSpeed: 120, maxSpeed: 450, minAgl: 350, cooldown: 11,
     level: true, cam: { dist: 1.8, azim: 1.05, fov: 9 },
     pose(t, p) {
       p.pitch(90 * DEG * ease(seg(t, 0, 1.0)));
@@ -192,7 +198,7 @@ export const MANEUVERS: Record<ManeuverId, ManeuverDef> = {
   // A short, low-slung reversal: up to about 70 degrees, snap round on the rudder, drop the nose onto the new heading.
   jTurn: {
     id: 'jTurn', name: 'J-turn', blurb: 'The Herbst manoeuvre: a high-alpha reversal that turns the jet around in a fraction of the room a turn needs.',
-    duration: 3.6, minSpeed: 100, maxSpeed: 400, minAgl: 420, cooldown: 8,
+    duration: 3.6, minSpeed: 90, maxSpeed: 450, minAgl: 260, cooldown: 8,
     level: true, cam: { dist: 1.7, azim: 1.0, fov: 8 },
     pose(t, p) {
       p.pitch(72 * DEG * ease(seg(t, 0, 0.8)));
@@ -209,7 +215,7 @@ export const MANEUVERS: Record<ManeuverId, ManeuverDef> = {
   // Vertical climb, the jet stops, slides back on its tail, then the nose falls through and the jet dives out.
   tailslide: {
     id: 'tailslide', name: 'Tail slide', blurb: 'Straight up until it stops, a slide backward on the tail, then the nose falls through into a dive. The MiG special.',
-    duration: 4.6, minSpeed: 120, maxSpeed: 400, minAgl: 800, cooldown: 11,
+    duration: 4.6, minSpeed: 100, maxSpeed: 450, minAgl: 600, aglSlope: 1.2, aglKnee: 250, cooldown: 11,
     level: true, cam: { dist: 1.8, azim: 1.1, fov: 9 },
     pose(t, p) {
       const up = ease(seg(t, 0, 1.0));
@@ -226,7 +232,7 @@ export const MANEUVERS: Record<ManeuverId, ManeuverDef> = {
   // A rolling spiral around the line of flight: a barrel roll that corkscrews the jet clear of a pursuer's gun line.
   barrelRoll: {
     id: 'barrelRoll', name: 'Barrel roll', blurb: 'A full rolling corkscrew around the line of flight: loses a tail-chaser\'s aim without giving up any speed or height.',
-    duration: 2.6, minSpeed: 70, maxSpeed: 500, minAgl: 220, cooldown: 5,
+    duration: 2.6, minSpeed: 70, maxSpeed: 520, minAgl: 220, cooldown: 5,
     cam: { dist: 1.5, azim: 0.6, fov: 6 },
     pose(t, p) {
       const s = ease(seg(t, 0, 2.3));

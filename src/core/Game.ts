@@ -17,7 +17,7 @@ import { GRAVITY, STORES } from '../data/weapons';
 import { MAPS, mapIdFor } from '../data/maps';
 import { AIM, FLIGHT, TERRAIN_ASSIST, WORLD_BOUNDARY } from '../data/tuning';
 import { MouseAim } from '../flight/MouseAim';
-import { MANEUVERS } from '../flight/Maneuvers';
+import { MANEUVERS, aglNeeded } from '../flight/Maneuvers';
 import { scanTerrain, type TerrainThreat } from '../flight/TerrainAssist';
 import type { SurfaceInfo } from '../flight/FlightModel';
 import { CameraRig } from '../render/CameraRig';
@@ -1030,7 +1030,7 @@ export class Game {
     switch (why) {
       case 'slow': this.say(`${name}: TOO SLOW  ·  NEED ${spd(def.minSpeed)}`, 1.8); break;
       case 'fast': this.say(`${name}: TOO FAST  ·  UNDER ${spd(def.maxSpeed)}`, 1.8); break;
-      case 'low': this.say(`${name}: TOO LOW  ·  NEED ${Math.round(def.minAgl)} m`, 1.8); break;
+      case 'low': this.say(`${name}: TOO LOW  ·  NEED ${Math.round(aglNeeded(def, f.speed))} m`, 1.8); break;
       case 'cooldown': this.say(`${name}: READY IN ${Math.ceil(f.maneuverCool)} s`, 1.2); break;
       case 'ground': this.say(`${name}: AIRBORNE ONLY`, 1.2); break;
       case 'damaged': this.say(`${name}: AIRFRAME TOO DAMAGED`, 1.8); break;

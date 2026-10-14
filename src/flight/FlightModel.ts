@@ -3,7 +3,7 @@ import type { AircraftDef } from '../aircraft/AircraftDef';
 import type { DifficultyDef } from '../data/difficulty';
 import { FLIGHT } from '../data/tuning';
 import { DEG, G0, clamp, damp, lerp, moveToward, smoothstep } from '../core/math';
-import { Pose, type ManeuverDef } from './Maneuvers';
+import { Pose, aglNeeded, type ManeuverDef } from './Maneuvers';
 
 /** What the pilot (human or AI) asks for. Axes are -1..1; throttle 0..1. */
 export interface FlightInput {
@@ -173,7 +173,8 @@ export class FlightModel {
     if (this.maneuverCool > 0) return 'cooldown';
     if (this.speed < def.minSpeed) return 'slow';
     if (this.speed > def.maxSpeed) return 'fast';
-    if (this.agl < def.minAgl) return 'low';
+    // height needed: the move's own sink, plus five seconds of any descent already under way (a dive eats the margin)
+    if (this.agl - Math.max(0, -this.vel.y) * 5 < aglNeeded(def, this.speed)) return 'low';
     // a wing or the tail shot away: the airframe will not take it
     if (this.mods.lift < 0.72 || this.mods.pitch < 0.7 || this.mods.thrust < 0.35) return 'damaged';
     return null;
